@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- 高德地图 -->
+    <com.amap.api.maps.MapView
+        android:id="@+id/mapView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 左上角一键刷新（使用 arrow_clockwise.svg 图标） -->
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnRefresh"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="top|start"
+        android:layout_marginTop="12dp"
+        android:layout_marginStart="12dp"
+        android:background="@drawable/bg_overflow_btn"
+        android:contentDescription="@string/menu_refresh"
+        android:elevation="6dp"
+        android:padding="10dp"
+        android:src="@drawable/ic_refresh_svg"
+        app:tint="@color/text_primary" />
+
+    <!-- 右上角更多操作（⋮） -->
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnOverflow"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_overflow_btn"
+        android:contentDescription="@string/btn_more"
+        android:elevation="6dp"
+        android:padding="10dp"
+        android:src="@drawable/ic_more_vert"
+        app:tint="@color/text_primary" />
+
+    <!-- 底部浮动卡片：状态 + 家人列表（可收缩）+ 定位按钮 -->
+    <LinearLayout
+        android:id="@+id/bottomPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_bottom_panel"
+        android:elevation="12dp"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- 灰色小横条：32dp 高触摸区（视觉 6dp 细条），扩大拖拽识别范围 -->
+        <View
+            android:id="@+id/dragHandle"
+            android:layout_width="88dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center_horizontal"
+            android:background="@drawable/bg_drag_handle_area" />
+
+        <!-- 头部：返回按钮（详情时显示）+ 标题 + 连接状态胶囊（手势滑动区域） -->
+        <LinearLayout
+            android:id="@+id/panelHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <androidx.appcompat.widget.AppCompatImageButton
+                android:id="@+id/btnBack"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/btn_back"
+                android:padding="6dp"
+                android:src="@drawable/ic_back"
+                android:visibility="gone"
+                app:tint="@color/text_primary" />
+
+            <TextView
+                android:id="@+id/tvTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/title_family_share"
+                android:textColor="@color/text_primary"
+                android:textSize="17sp"
+                android:textStyle="bold" />
+
+            <!-- 响铃时显示：点击立即停止本机响铃 -->
+            <TextView
+                android:id="@+id/btnStopRing"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_ring_stop"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp"
+                android:text="@string/btn_stop_ring"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/statusPill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_status_pill"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp">
+
+                <View
+                    android:id="@+id/statusDot"
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:background="@drawable/dot_offline" />
+
+                <TextView
+                    android:id="@+id/tvStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="@string/status_connecting"
+                    android:textColor="@color/status_pill_offline_text"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 可整体收缩的面板主体（列表 + 按钮） -->
+        <LinearLayout
+            android:id="@+id/panelBody"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="12dp"
+            android:background="@color/divider" />
+
+        <!-- 家庭成员数量（简洁标签，非按钮） -->
+        <TextView
+            android:id="@+id/tvMemberCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <!-- 可收缩区域：成员列表 + 空提示 + 分隔线 -->
+        <LinearLayout
+            android:id="@+id/listArea"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/memberList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:maxHeight="200dp"
+                android:overScrollMode="never" />
+
+            <TextView
+                android:id="@+id/tvEmpty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="@string/no_member_yet"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="10dp"
+                android:background="@color/divider" />
+        </LinearLayout>
+
+        <!-- 主操作：定位我 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnLocateMe"
+            style="@style/Widget.Material3.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="46dp"
+            android:text="@string/btn_locate_me"
+            android:textSize="14sp"
+            app:icon="@drawable/ic_my_location"
+            app:iconGravity="textStart"
+            app:iconSize="18dp"
+            app:iconTint="@color/white" />
+        </LinearLayout>
+
+        <!-- 成员详情（内嵌在悬浮窗口内查看，不弹窗） -->
+        <LinearLayout
+            android:id="@+id/detailArea"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- 自绘刻度尺：默认刻度尺会被底部面板遮挡，这里自绘并跟随面板高度定位 -->
+    <LinearLayout
+        android:id="@+id/scaleBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvScaleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/bg_scale_label"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:text="100米"
+            android:textColor="@color/white"
+            android:textSize="10sp" />
+
+        <View
+            android:id="@+id/scaleLine"
+            android:layout_width="56dp"
+            android:layout_height="14dp" />
+    </LinearLayout>
+
+</FrameLayout>

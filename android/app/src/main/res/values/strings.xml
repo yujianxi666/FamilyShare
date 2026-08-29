@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">家庭共享</string>
+
+    <!-- 主界面 -->
+    <string name="title_family_share">家庭共享</string>
+    <string name="status_connecting">连接中…</string>
+    <string name="status_online">已连接</string>
+    <string name="status_offline">服务器离线</string>
+    <string name="btn_locate_me">定位我</string>
+    <string name="btn_code">家庭码</string>
+    <string name="btn_family_setup">切换家庭</string>
+    <string name="btn_battery">权限设置</string>
+    <string name="no_member_yet">还没有家人，点击下方按钮创建/加入家庭</string>
+
+    <!-- 家庭设置 -->
+    <string name="dialog_family_title">家庭设置</string>
+    <string name="radio_create">创建家庭</string>
+    <string name="radio_join">加入家庭</string>
+    <string name="hint_name">我的昵称</string>
+    <string name="hint_family_code">6位家庭码（加入时填写）</string>
+    <string name="btn_ok">确定</string>
+    <string name="btn_cancel">取消</string>
+
+    <!-- 成员列表 -->
+    <string name="time_just_now">刚刚更新</string>
+    <string name="time_minutes_ago">%1$d 分钟前更新</string>
+    <string name="time_hours_ago">%1$d 小时前更新</string>
+    <string name="time_days_ago">%1$d 天前更新</string>
+    <string name="status_member_offline">离线</string>
+    <string name="member_no_location">暂无位置</string>
+
+    <!-- 折叠菜单 / 成员列表收缩 -->
+    <string name="btn_more">更多操作</string>
+    <string name="btn_collapse">收起/展开家人列表</string>
+    <string name="member_count_title">家庭成员（%1$d）</string>
+
+    <!-- 成员操作 -->
+    <string name="member_action_remove">移出家庭</string>
+    <string name="member_action_remove_confirm">确定将 %1$s 移出家庭？</string>
+    <string name="member_action_remove_owner_only">仅家庭创建者可移出成员</string>
+
+    <!-- 家庭码 -->
+    <string name="dialog_code_title">当前家庭码</string>
+    <string name="dialog_code_hint">家人输入此码即可加入你的家庭</string>
+    <string name="btn_copy">复制家庭码</string>
+    <string name="toast_code_copied">家庭码已复制，分享给家人即可加入</string>
+    <string name="toast_no_family_code">尚未加入家庭，请先创建或加入</string>
+    <string name="dialog_switch_confirm_message">切换家庭后将不再显示原家庭成员的位置，确定切换？</string>
+    <string name="dialog_switch_confirm_ok">确定切换</string>
+
+    <!-- 一键刷新 -->
+    <string name="menu_refresh">一键刷新</string>
+    <string name="toast_refresh_all_sent">已向所有家人请求实时位置</string>
+    <string name="toast_no_other_members">家庭里暂无其他成员</string>
+
+    <!-- 提示 -->
+    <string name="toast_need_family_first">请先创建或加入家庭</string>
+    <string name="toast_need_location_permission">需要定位权限才能共享位置</string>
+    <string name="toast_report_requested">已请求刷新 %1$s 的位置</string>
+    <string name="toast_target_offline">%1$s 设备不在线，无法实时刷新</string>
+    <string name="toast_create_family_success">家庭创建成功，家庭码：%1$s</string>
+    <string name="toast_join_family_success">已加入家庭</string>
+    <string name="toast_network_error">网络错误：%1$s</string>
+    <string name="toast_locating">正在定位…</string>
+    <string name="toast_my_location_updated">已定位到我的位置</string>
+    <string name="toast_location_failed">定位失败，请检查定位权限/信号</string>
+
+    <!-- 通知 -->
+    <string name="notification_channel_name">位置共享服务</string>
+    <string name="notification_title">位置共享中</string>
+    <string name="notification_text">每30分钟自动上报一次位置，家人查看时实时推送</string>
+
+    <!-- 权限/保活引导 -->
+    <string name="dialog_permission_title">开启定位权限</string>
+    <string name="dialog_permission_message">需要“始终允许”定位权限，才能在后台持续共享位置</string>
+    <string name="dialog_battery_title">后台保活设置</string>
+    <string name="dialog_battery_message">请允许忽略电池优化，并在系统设置中为本应用开启“自启动”，防止被杀后台</string>
+
+    <!-- 隐私说明（高德SDK隐私合规 + 首次启动告知） -->
+    <string name="dialog_privacy_title">隐私与数据说明</string>
+    <string name="dialog_privacy_message">本应用会将你的位置信息上传到你自行架设的家庭服务器（默认每30分钟上报一次；家人查看你时立即推送一次），仅家庭成员可见。\n\n请妥善保管家庭码，不要告知无关人员。\n\n点击「同意并继续」即表示你已知悉并同意上述说明。</string>
+    <string name="btn_privacy_agree">同意并继续</string>
+
+    <!-- 权限设置 -->
+    <string name="perm_location">定位权限（始终允许）</string>
+    <string name="perm_notification">通知权限</string>
+    <string name="perm_battery">忽略电池优化</string>
+    <string name="perm_autostart">自启动管理（防杀后台）</string>
+    <string name="perm_install">安装未知应用（更新用）</string>
+    <string name="perm_autostart_hint">需在系统设置开启</string>
+    <string name="autostart_guide_message">各厂商的自启动管理入口不同，最稳妥的方式：打开系统设置，在顶部的搜索框输入「自启动」（部分手机叫「开机自启/后台启动/允许自启动」），找到本应用并开启。\n\n点击下方「去设置」后再操作。</string>
+    <string name="perm_status_allowed">已允许</string>
+    <string name="perm_status_off">未开启</string>
+    <string name="menu_privacy">隐私政策</string>
+    <string name="bug_resolved_notify">您提交的反馈已处理完成，感谢您的建议！</string>
+    <string name="menu_privacy_rights">隐私权利</string>
+    <string name="menu_about">关于</string>
+    <string name="about_developer">开发者</string>
+    <string name="developer_name">YOUR_NAME</string>
+    <string name="toast_open_url_failed">无法打开链接</string>
+
+    <!-- 检查更新 -->
+    <string name="menu_update">检查更新</string>
+    <string name="toast_update_latest">已是最新版本</string>
+    <string name="toast_update_check_failed">检查更新失败：服务器响应异常</string>
+    <string name="toast_update_missing_apk">检测到新版本，但服务器上缺少安装包（downloads/app-release.apk）</string>
+    <string name="toast_update_md5_mismatch">下载校验失败（文件与服务器不一致），请重试</string>
+    <string name="toast_update_downloading">正在下载更新…</string>
+    <string name="toast_update_download_failed">下载失败：%1$s</string>
+    <string name="dialog_update_title">发现新版本</string>
+    <string name="dialog_update_message">新版本：%1$s\n\n更新说明：\n%2$s</string>
+    <string name="btn_update_now">立即更新</string>
+    <string name="toast_update_install_permission">更新需要允许安装未知应用，请开启后重试</string>
+    <string name="btn_go_settings">去开启</string>
+    <string name="toast_update_install_failed">安装失败，请检查安装权限</string>
+
+    <!-- 下线模式 -->
+    <string name="menu_offline">下线</string>
+    <string name="menu_online">上线</string>
+    <string name="toast_offline_on">已进入下线模式：可查看家人位置，但不再更新自己的位置</string>
+    <string name="toast_offline_off">已上线</string>
+
+    <!-- 成员详情页 -->
+    <string name="btn_back">返回</string>
+    <string name="dialog_member_detail_title">%1$s 的详情</string>
+    <string name="toast_navi_failed">无法打开导航</string>
+    <string name="detail_online">在线</string>
+    <string name="detail_offline">离线</string>
+    <string name="detail_offline_mode">下线模式</string>
+    <string name="detail_no_location">暂无位置</string>
+    <string name="detail_no_address">暂无</string>
+    <string name="detail_unknown">未知</string>
+    <string name="detail_refresh">刷新</string>
+
+    <!-- 轨迹 / 移出 -->
+    <string name="track_on">开启轨迹</string>
+    <string name="track_off">关闭轨迹</string>
+    <string name="toast_track_on">已开启 %1$s 的轨迹（每 %2$d 分钟记录一次位置）</string>
+    <string name="toast_track_off">已关闭 %1$s 的轨迹</string>
+    <string name="track_interval_title">轨迹更新间隔</string>
+    <string name="track_interval_1m">1 分钟更新一次</string>
+    <string name="track_interval_3m">3 分钟更新一次</string>
+    <string name="track_interval_5m">5 分钟更新一次</string>
+    <string name="track_interval_custom">自定义</string>
+    <string name="track_interval_custom_hint">分钟</string>
+    <string name="track_interval_invalid">请输入 1-1440 之间的分钟数</string>
+    <string name="dialog_remove_choice_title">移出成员</string>
+    <string name="option_remove_only">仅移出</string>
+    <string name="option_remove_ban">移出并拉黑</string>
+    <string name="toast_removed">已移出 %1$s</string>
+    <string name="toast_removed_banned">已将 %1$s 移出家庭并拉黑（无法再加入）</string>
+    <string name="toast_member_removed">%1$s 已移出家庭</string>
+    <string name="toast_removed_self">你已被移出家庭</string>
+
+    <!-- 响铃 -->
+    <string name="ring_notification_title">家人正在找你</string>
+    <string name="ring_notification_text">%1$s 请求你的手机响铃（30 秒后自动停止）</string>
+    <string name="toast_ring_sent">已请求 %1$s 的手机响铃</string>
+    <string name="toast_ring_offline">%1$s 设备不在线，无法响铃</string>
+    <string name="btn_stop_ring">关闭响铃</string>
+    <string name="perm_ring">允许他人响铃</string>
+
+    <!-- 黑名单管理 -->
+    <string name="menu_banlist">黑名单管理</string>
+    <string name="banlist_title">已拉黑设备</string>
+    <string name="banlist_empty">黑名单为空</string>
+    <string name="banlist_owner_only">仅创建者可管理黑名单</string>
+    <string name="btn_unban">解除拉黑</string>
+    <string name="toast_unban">已解除拉黑，该设备可重新加入家庭</string>
+
+    <!-- 头像 -->
+    <string name="menu_avatar">更改头像</string>
+    <string name="avatar_pick_title">选择头像图片</string>
+    <string name="avatar_crop_title">裁剪头像</string>
+    <string name="toast_no_gallery_app">无法打开图片选择器</string>
+    <string name="toast_avatar_decode_failed">图片读取失败，请换一张试试</string>
+    <string name="toast_avatar_uploaded">头像已更新</string>
+
+    <!-- 群主 / 转让群主 -->
+    <string name="owner_badge">群主</string>
+    <string name="menu_transfer_owner">转让群主</string>
+    <string name="transfer_owner_select_title">选择新的群主</string>
+    <string name="transfer_owner_message">将群主转让给以下成员：</string>
+
+    <!-- 群主转让 -->
+    <string name="dialog_transfer_owner_title">转让群主</string>
+    <string name="dialog_transfer_owner_message">切换家庭前需先转让群主，请选择新的群主：</string>
+    <string name="toast_transfer_owner_done">已将群主转让给 %1$s</string>
+    <string name="toast_owner_transferred_to_me">你已成为新的群主</string>
+
+    <!-- 家庭邀请 -->
+    <string name="invite_prompt_title">邀请原家庭成员</string>
+    <string name="invite_prompt_message">是否邀请原家庭成员加入新家庭？</string>
+    <string name="invite_select_title">选择要邀请的成员</string>
+    <string name="invite_send">发送邀请</string>
+    <string name="invite_none_selected">请至少选择一位成员</string>
+    <string name="toast_invite_sent">已向 %1$d 位成员发送邀请</string>
+    <string name="toast_invite_offline">%1$d 位成员不在线，无法收到邀请</string>
+    <string name="invite_dialog_title">加入邀请</string>
+    <string name="invite_dialog_message">%1$s 邀请你加入新家庭，家庭码：%2$s</string>
+    <string name="invite_accept">加入</string>
+    <string name="invite_ignore">忽略</string>
+
+    <!-- 消息中心（三点菜单 · 消息） -->
+    <string name="menu_messages">消息</string>
+    <string name="messages_title">消息</string>
+    <string name="messages_empty">暂无消息</string>
+    <string name="messages_count">消息（%1$d）</string>
+    <!-- 加入家庭申请（群主审批） -->
+    <string name="join_request_message">%1$s 申请加入家庭</string>
+    <string name="join_approve">同意</string>
+    <string name="join_reject">拒绝</string>
+    <string name="toast_join_request_added">收到新的加入家庭申请</string>
+    <string name="toast_invite_received">收到新的加入家庭邀请</string>
+    <string name="toast_join_pending">已提交加入申请，等待群主同意…</string>
+    <string name="join_wait_title">等待群主同意</string>
+    <string name="toast_join_approved">群主已同意，已加入家庭</string>
+    <string name="toast_join_rejected">群主拒绝了本次加入申请</string>
+    <string name="toast_join_expired">加入申请已失效，请重新申请</string>
+    <string name="toast_join_waiting">群主暂未处理，请稍后在「消息」中查看</string>
+    <string name="toast_join_accept_success">已同意 %1$s 加入家庭</string>
+    <string name="toast_join_reject_success">已拒绝 %1$s 加入家庭</string>
+
+    <!-- 反馈/Bug 上报 -->
+    <string name="menu_report_bug">反馈Bug</string>
+    <string name="bug_dialog_title">反馈问题 / Bug</string>
+    <string name="bug_dialog_hint">请填写你遇到的问题或建议（提交后写入服务器）</string>
+    <string name="bug_submit">提交反馈</string>
+    <string name="bug_sent">反馈已提交，感谢你的帮助</string>
+    <string name="bug_empty">请先填写反馈内容</string>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 「关闭响铃」红色胶囊按钮（深浅色模式通用） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#E53935" />
+    <corners android:radius="999dp" />
+</shape>

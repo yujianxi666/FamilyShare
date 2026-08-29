@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>反馈 / Bug 管理</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    margin: 0; padding: 20px; background: #f4f6fb; color: #1a1a2e;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #8a8a9e; font-size: 13px; margin-bottom: 16px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .tab { padding: 7px 16px; border-radius: 20px; border: 1px solid #d9dde6; background: #fff;
+         color: #1a1a2e; cursor: pointer; font-size: 14px; }
+  .tab.active { background: #2b7ce9; color: #fff; border-color: #2b7ce9; }
+  .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px;
+         color: #fff; background: #2b7ce9; }
+  .btn.ghost { background: #eef1f6; color: #1a1a2e; border: 1px solid #d9dde6; }
+  .btn.small { padding: 6px 12px; font-size: 13px; }
+  .btn.done { background: #16a34a; }
+  .btn.reopen { background: #f59e0b; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 14px;
+          border: 1px solid #eef0f5; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .card.resolved { opacity: .72; }
+  .meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: #8a8a9e; margin-bottom: 10px; }
+  .meta b { color: #1a1a2e; font-weight: 600; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+  .tag.doing { background: #e8f1fe; color: #1b5fc2; }
+  .tag.done { background: #e7f8ee; color: #16a34a; }
+  textarea { width: 100%; min-height: 68px; padding: 8px; border: 1px solid #d9dde6; border-radius: 8px;
+             font: inherit; font-size: 14px; resize: vertical; color: #1a1a2e; background: #fbfcfe; }
+  textarea:focus { outline: 2px solid #2b7ce9; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .empty { text-align: center; color: #8a8a9e; padding: 40px 0; font-size: 15px; }
+  .count { font-size: 13px; color: #8a8a9e; }
+</style>
+</head>
+<body>
+<h1>反馈 / Bug 管理</h1>
+<div class="sub">数据来源 server/bugs.json（客户端「反馈Bug」写入）。可复制文本、标为已完成或删除。</div>
+
+<div class="toolbar">
+  <button class="tab" data-filter="all">全部</button>
+  <button class="tab active" data-filter="doing">待处理</button>
+  <button class="tab" data-filter="done">已解决</button>
+  <span class="count" id="count"></span>
+</div>
+
+<div id="list"></div>
+<div class="empty" id="empty" style="display:none">暂无 Bug，去客户端上报一条试试。</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let filter = 'doing';
+// 访问口令：由服务端 <ApiController.bugAdmin> 注入（替换 __API_TOKEN__ 占位），
+// 用于让 /api/bug/* 的 fetch 带 token（这些接口不在 AccessTokenFilter 白名单内）。
+const API_TOKEN = '__API_TOKEN__';
+
+function tsToStr(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function matches(item) {
+  const resolved = !!item.resolved;
+  if (filter === 'doing') return !resolved;
+  if (filter === 'done') return resolved;
+  return true;
+}
+
+async function load() {
+  const res = await fetch('/api/bug/list?token=' + encodeURIComponent(API_TOKEN));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const bugs = await res.json();
+  const arr = bugs.filter(matches);
+  const list = $('#list');
+  list.innerHTML = '';
+  $('#count').textContent = `共 ${bugs.length} 条（待处理 ${bugs.filter(b=>!b.resolved).length}，已解决 ${bugs.filter(b=>b.resolved).length}）`;
+  $('#empty').style.display = arr.length ? 'none' : 'block';
+  arr.sort((a, b) => (a.resolved ? 1 : 0) - (b.resolved ? 1 : 0) || (b.time || 0) - (a.time || 0));
+  for (const bug of arr) {
+    const card = document.createElement('div');
+    card.className = 'card' + (bug.resolved ? ' resolved' : '');
+    const resolved = !!bug.resolved;
+    card.innerHTML = `
+      <div class="meta">
+        <span>编号 <b>${esc(bug.id || '-')}</b></span>
+        <span>时间 <b>${tsToStr(bug.time)}</b></span>
+        <span>设备 <b>${esc(bug.deviceId || '-')}</b></span>
+        <span>昵称 <b>${esc(bug.name || '-')}</b></span>
+        <span class="tag ${resolved ? 'done' : 'doing'}">${resolved ? '已解决' : '待处理'}</span>
+      </div>
+      <textarea data-id="${esc(bug.id)}">${esc(bug.content || '')}</textarea>
+      <div class="actions">
+        <button class="btn small" data-act="copy" data-id="${esc(bug.id)}">复制文本</button>
+        ${resolved
+          ? '<button class="btn small reopen" data-act="reopen" data-id="'+esc(bug.id)+'">重新打开</button>'
+          : '<button class="btn small done" data-act="done" data-id="'+esc(bug.id)+'">完成 / 关闭</button>'}
+        <button class="btn small ghost" data-act="delete" data-id="${esc(bug.id)}">删除</button>
+      </div>`;
+    list.appendChild(card);
+  }
+}
+
+async function saveBug(id, content) {
+  const res = await fetch('/api/bug/update?token=' + encodeURIComponent(API_TOKEN), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, content }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+}
+
+async function setResolved(id, resolved) {
+  const res = await fetch('/api/bug/update?token=' + encodeURIComponent(API_TOKEN), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, resolved }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+}
+
+async function deleteBug(id) {
+  const res = await fetch('/api/bug/delete?token=' + encodeURIComponent(API_TOKEN), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+}
+
+/** 复制文本（普通 http 下 navigator.clipboard 可能不可用，用 execCommand 回退） */
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+    return;
+  }
+  fallbackCopy(text);
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+}
+
+document.addEventListener('click', async (e) => {
+  const tab = e.target.closest('.tab');
+  if (tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    filter = tab.dataset.filter;
+    load();
+    return;
+  }
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  btn.disabled = true;
+  try {
+    if (btn.dataset.act === 'copy') {
+      const ta = btn.closest('.card').querySelector('textarea');
+      copyText(ta.value);
+      // 内联反馈，不用浏览器弹窗
+      const old = btn.textContent;
+      btn.textContent = '已复制';
+      setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 1200);
+    } else if (btn.dataset.act === 'done') {
+      await setResolved(id, true);
+      load();
+    } else if (btn.dataset.act === 'reopen') {
+      await setResolved(id, false);
+      load();
+    } else if (btn.dataset.act === 'delete') {
+      if (!confirm('确定删除这条反馈？删除后不可恢复。')) { btn.disabled = false; return; }
+      await deleteBug(id);
+      load();
+    }
+  } catch (err) {
+    alert('操作失败：' + err.message);
+    btn.disabled = false;
+  }
+});
+
+load();
+</script>
+<div class="beian" style="text-align:center;color:#8a8a9e;font-size:12px;margin-top:18px;">
+  Copyright © 2026 家庭共享 your-server.example.com All Rights Reserved. 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" style="color:#8a8a9e;text-decoration:none;">YOUR_ICP_NUMBER</a>
+</div>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌色 -->
+    <color name="primary">#2B7CE9</color>
+    <color name="primary_dark">#1B5FC2</color>
+    <color name="primary_light">#E8F1FE</color>
+    <color name="white">#FFFFFF</color>
+
+    <!-- 文本 -->
+    <color name="text_primary">#1A1A2E</color>
+    <color name="text_secondary">#8A8A9E</color>
+
+    <!-- 背景 -->
+    <color name="bg_panel">#FFFFFF</color>
+    <color name="bg_page">#F4F6FB</color>
+    <color name="divider">#EEF0F5</color>
+
+    <!-- 在线状态 -->
+    <color name="dot_online">#22C55E</color>
+    <color name="dot_offline">#C4C9D4</color>
+    <color name="status_pill_online">#E7F8EE</color>
+    <color name="status_pill_online_text">#16A34A</color>
+    <color name="status_pill_offline">#F0F1F5</color>
+    <color name="status_pill_offline_text">#8A8A9E</color>
+
+    <!-- 头像配色 -->
+    <color name="avatar_1">#2B7CE9</color>
+    <color name="avatar_2">#22C55E</color>
+    <color name="avatar_3">#F59E0B</color>
+    <color name="avatar_4">#8B5CF6</color>
+    <color name="avatar_5">#EC4899</color>
+    <color name="avatar_6">#06B6D4</color>
+
+    <!-- 面板/菜单/按钮底色（深色模式在 values-night 中覆盖） -->
+    <color name="drag_handle">#C4C9D4</color>
+    <color name="bg_popup">#FFFFFF</color>
+    <color name="bg_overflow">#FFFFFF</color>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 更新 APK 下载目录（filesDir/downloads） -->
+    <files-path
+        name="downloads"
+        path="downloads/" />
+</paths>

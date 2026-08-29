@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深色模式配色：覆盖浅色值，保证深色背景下文字可读、界面统一 -->
+<resources>
+    <!-- 文本（深色背景下用亮色文字） -->
+    <color name="text_primary">#E8EAF0</color>
+    <color name="text_secondary">#A6ACB8</color>
+
+    <!-- 背景 -->
+    <color name="bg_panel">#1F2228</color>
+    <color name="bg_page">#16181D</color>
+    <color name="divider">#2C2F36</color>
+
+    <!-- 在线状态 -->
+    <color name="dot_offline">#565B66</color>
+    <color name="status_pill_online">#143A26</color>
+    <color name="status_pill_online_text">#4ADE80</color>
+    <color name="status_pill_offline">#2A2D35</color>
+    <color name="status_pill_offline_text">#9AA0AC</color>
+
+    <!-- 面板/菜单/按钮底色 -->
+    <color name="drag_handle">#565B66</color>
+    <color name="bg_popup">#23262D</color>
+    <color name="bg_overflow">#23262D</color>
+</resources>

@@ -1,0 +1,35 @@
+# macOS / Windows
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / 编辑器
+.idea/
+*.iml
+.vscode/
+*.class
+
+# Android 构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/.cxx/
+android/.externalNativeBuild/
+
+# Java 构建产物
+server/target/
+
+# 签名密钥（私有，绝不提交）
+*.keystore
+*.jks
+
+# 服务端运行时数据（不提交）
+server/data/db.json
+server/bugs.json
+server/icons/*
+server/downloads/*.apk
+
+# 日志
+*.log

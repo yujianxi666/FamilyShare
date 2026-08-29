@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/menu_refresh"
+        android:icon="@drawable/ic_refresh"
+        android:title="@string/menu_refresh" />
+
+    <item
+        android:id="@+id/menu_code"
+        android:title="@string/btn_code" />
+
+    <item
+        android:id="@+id/menu_family"
+        android:title="@string/btn_family_setup" />
+
+    <item
+        android:id="@+id/menu_battery"
+        android:title="@string/btn_battery" />
+
+    <item
+        android:id="@+id/menu_offline"
+        android:title="@string/menu_offline" />
+
+    <item
+        android:id="@+id/menu_banlist"
+        android:title="@string/menu_banlist" />
+
+    <item
+        android:id="@+id/menu_update"
+        android:title="@string/menu_update" />
+
+</menu>

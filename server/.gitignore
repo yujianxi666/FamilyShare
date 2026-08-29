@@ -1,0 +1,6 @@
+target/
+data/db.json
+downloads/*.apk
+icons/
+bugs.json
+*.log

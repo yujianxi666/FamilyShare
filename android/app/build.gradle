@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 从 gradle.properties 读取配置，也可以在命令行覆盖：-PAMAP_KEY=xxx -PSERVER_URL=xxx -PAPI_TOKEN=xxx
+def amapKey = project.findProperty('AMAP_KEY') ?: 'YOUR_AMAP_KEY_HERE'
+def serverUrl = project.findProperty('SERVER_URL') ?: 'http://192.168.1.100:3000'
+def apiToken = project.findProperty('API_TOKEN') ?: 'YOUR_API_TOKEN'
+
+android {
+    namespace 'com.family.share'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.family.share"
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+
+        // 高德 Key 同时注入 AndroidManifest 与 BuildConfig
+        manifestPlaceholders = [AMAP_KEY: amapKey]
+        buildConfigField "String", "AMAP_KEY", "\"${amapKey}\""
+        buildConfigField "String", "SERVER_URL", "\"${serverUrl}\""
+        buildConfigField "String", "API_TOKEN", "\"${apiToken}\""
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        // JDK 21 已弃用 target 8，用 11 消除警告（D8 会自动降级字节码，兼容 minSdk 23）
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+}
+
+// 显示已过时 API 的使用位置（便于清理）
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ["-Xlint:deprecation"]
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.core:core:1.13.1'
+
+    // 网络
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // 高德地图 SDK（Maven 中央仓库）
+    // 注意：3dmap 9.x 已内置定位 SDK，勿再单独引入 com.amap.api:location，否则类重复
+    implementation 'com.amap.api:3dmap:9.8.3'    // 3D 地图（含定位）
+}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深色模式主题覆盖：状态栏/导航栏图标变亮色，底栏与面板同色（深色） -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.FamilyShare" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">@color/white</item>
+
+        <!-- 沉浸式状态栏：透明，地图延伸至顶部 -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowTranslucentStatus">true</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+
+        <!-- 底部导航栏与面板同色（深色），图标用亮色 -->
+        <item name="android:navigationBarColor">@color/bg_panel</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
+
+        <!-- 圆角风格统一 -->
+        <item name="android:dialogCornerRadius">20dp</item>
+        <item name="materialAlertDialogTheme">@style/FamilyShare.Dialog</item>
+    </style>
+</resources>

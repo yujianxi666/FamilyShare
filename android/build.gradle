@@ -1,0 +1,4 @@
+// 根构建脚本：统一声明插件版本
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

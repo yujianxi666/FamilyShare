@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 灰色小横条：外层 32dp 触摸区，内部 6dp 视觉条（扩大拖拽识别范围，视觉不变） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:top="13dp"
+        android:bottom="13dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/drag_handle" />
+            <corners android:radius="2dp" />
+        </shape>
+    </item>
+</layer-list>
