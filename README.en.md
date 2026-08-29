@@ -141,7 +141,6 @@ Follow [`docs/SETUP_AMAP.md`](docs/SETUP_AMAP.md) to request and configure it (A
 
 - There is **no account system**; the family code is the credential and the blacklist is enforced by the creator's identity. Keep the access token and family codes safe.
 - Location data lives on **your own server**; for public deployments add an HTTPS/WSS reverse proxy and tighten `network_security_config.xml` to your domain only.
-- The "observer mode" (`Aphasia2901` view-all) has been removed for security reasons; no hidden view-all channel exists.
 
 ---
 
