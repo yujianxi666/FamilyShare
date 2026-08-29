@@ -11,14 +11,32 @@ public final class AppConfig {
     /** 高德开放平台 Key */
     public static final String AMAP_KEY = BuildConfig.AMAP_KEY;
 
-    /** 后端服务器地址，如 http://192.168.1.100:3000 */
-    public static final String SERVER_URL = BuildConfig.SERVER_URL;
+    /** 官方服务器地址（构建时注入；作为“官方”来源，默认使用，界面不展示其地址） */
+    public static final String OFFICIAL_URL = BuildConfig.SERVER_URL;
+
+    /** 当前生效的后端服务器地址（可运行时切换；默认 = 官方） */
+    public static volatile String SERVER_URL = BuildConfig.SERVER_URL;
+
+    /** 当前生效的 WebSocket 地址（随 SERVER_URL 推导） */
+    public static volatile String WS_URL = BuildConfig.SERVER_URL.replaceFirst("^http", "ws") + "/ws";
 
     /** 访问口令：/api/**、/ws、/icons/** 请求需携带（与服务器 app.api-token 一致） */
     public static final String API_TOKEN = BuildConfig.API_TOKEN;
 
-    /** WebSocket 地址（由 HTTP 地址推导） */
-    public static final String WS_URL = SERVER_URL.replaceFirst("^http", "ws") + "/ws";
+    /** 切换当前服务器（baseUrl 不带末尾斜杠，如 http://192.168.1.10:3000 / https://api.example.com） */
+    public static void applyServer(String baseUrl) {
+        SERVER_URL = baseUrl;
+        WS_URL = baseUrl.replaceFirst("^http", "ws") + "/ws";
+    }
+
+    /** 由 scheme/host/port 拼接服务器地址；port 为空则不带端口 */
+    public static String buildServerUrl(String scheme, String host, String port) {
+        String u = scheme + "://" + host;
+        if (port != null && !port.isEmpty()) {
+            u = u + ":" + port;
+        }
+        return u;
+    }
 
     /** 默认上报间隔：30 分钟 */
     public static final long REPORT_INTERVAL_MS = 30 * 60 * 1000L;

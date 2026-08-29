@@ -163,6 +163,56 @@ public class Prefs {
         sp.edit().putBoolean("ring_enabled", v).apply();
     }
 
+    /** 允许他人让本机响铃的时长（毫秒），默认 30 秒 */
+    public long ringDurationMs() {
+        return sp.getLong("ring_duration_ms", 30 * 1000L);
+    }
+
+    public void ringDurationMs(long v) {
+        sp.edit().putLong("ring_duration_ms", v).apply();
+    }
+
+    // ---------- 服务器切换 ----------
+
+    /** 自定义服务器列表，每项为 {scheme, host, port}（port 可为空串）。内部以 '\n' 分隔条目、'|' 分隔字段。 */
+    public java.util.List<String[]> customServers() {
+        java.util.List<String[]> out = new java.util.ArrayList<>();
+        String raw = sp.getString("custom_servers", "");
+        if (raw == null || raw.isEmpty()) {
+            return out;
+        }
+        for (String line : raw.split("\n")) {
+            String[] parts = line.split("\\|", -1);
+            if (parts.length >= 3) {
+                out.add(new String[]{parts[0], parts[1], parts[2]});
+            }
+        }
+        return out;
+    }
+
+    public void customServers(java.util.List<String[]> list) {
+        StringBuilder sb = new StringBuilder();
+        for (String[] s : list) {
+            if (s == null || s.length < 3) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(s[0]).append('|').append(s[1]).append('|').append(s[2]);
+        }
+        sp.edit().putString("custom_servers", sb.toString()).apply();
+    }
+
+    /** 当前选中的服务器下标：-1 = 官方默认；>= 0 = customServers() 的下标 */
+    public int activeServerIndex() {
+        return sp.getInt("active_server_index", -1);
+    }
+
+    public void activeServerIndex(int v) {
+        sp.edit().putInt("active_server_index", v).apply();
+    }
+
     // ---------- Bug 处理结果告知 ----------
 
     /** 已被标记完成、且已告知过用户的 Bug id 集合 */

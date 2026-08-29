@@ -15,7 +15,7 @@
     <artifactId>family-share-server</artifactId>
     <version>1.0.0</version>
     <name>family-share-server</name>
-    <description>家庭位置共享后端（Java / Spring Boot）</description>
+    <description>家庭共享后端（Java / Spring Boot）</description>
 
     <properties>
         <java.version>17</java.version>

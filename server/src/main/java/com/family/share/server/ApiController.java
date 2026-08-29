@@ -25,7 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 家庭位置共享 REST 接口（家庭/成员/位置/轨迹/响铃/头像/Bug 反馈/更新）。
+ * 家庭共享 REST 接口（家庭/成员/位置/轨迹/响铃/头像/Bug 反馈/更新）。
  */
 @RestController
 public class ApiController {

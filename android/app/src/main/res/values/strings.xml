@@ -54,6 +54,30 @@
     <string name="toast_refresh_all_sent">已向所有家人请求实时位置</string>
     <string name="toast_no_other_members">家庭里暂无其他成员</string>
 
+    <!-- 服务器切换 -->
+    <string name="menu_switch_server">切换服务器</string>
+    <string name="server_official">官方服务器</string>
+    <string name="server_addr_label">服务器地址</string>
+    <string name="server_addr_hint">域名或IP</string>
+    <string name="server_port_hint">端口（留空=不使用）</string>
+    <string name="server_scheme_http">http</string>
+    <string name="server_scheme_https">https</string>
+    <string name="server_add">添加服务器</string>
+    <string name="hint_server_host">请输入服务器地址</string>
+    <string name="hint_server_port">端口需为数字</string>
+    <string name="toast_server_switched">已切换服务器</string>
+    <string name="toast_server_empty">该服务器暂无家庭成员，已保留原列表</string>
+    <string name="server_delete">删除</string>
+    <string name="server_delete_confirm">确认删除该服务器？删除后将无法再直接选择它。</string>
+
+    <!-- 响铃时长 -->
+    <string name="perm_ring_duration">响铃时长</string>
+    <string name="btn_custom">自定义</string>
+    <string name="hint_ring_duration_seconds">输入响铃秒数（1-300）</string>
+    <string name="hint_ring_duration_invalid">请输入 1-300 之间的秒数</string>
+    <string name="ring_duration_default">默认（30秒）</string>
+    <string name="ring_duration_unit">秒</string>
+
     <!-- 提示 -->
     <string name="toast_need_family_first">请先创建或加入家庭</string>
     <string name="toast_need_location_permission">需要定位权限才能共享位置</string>

@@ -4,7 +4,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * 家庭位置共享后端入口（Spring Boot）。
+ * 家庭共享后端入口（Spring Boot）。
  * 启动：java -jar family-share-server.jar
  */
 @SpringBootApplication

@@ -362,7 +362,6 @@ public class LocationReportService extends Service {
     // ---------------- 响铃（家人查找手机） ----------------
 
     private static final int RING_NOTIFY_ID = 1002;
-    private static final long RING_DURATION_MS = 30 * 1000L;
 
     private MediaPlayer ringPlayer;
     /** 响铃前记录的闹钟音量，-1 表示无需恢复 */
@@ -373,7 +372,7 @@ public class LocationReportService extends Service {
     private final Runnable ringStopRunnable = this::stopRing;
 
     /**
-     * 播放响铃 30 秒 + 常驻通知（点击打开 App）。
+     * 播放响铃（时长可自定义，默认 30 秒）+ 常驻通知（点击打开 App）。
      * 使用闹钟音频流：手机静音/振动模式下也能出声（查找手机场景），结束后恢复原音量。
      * 若用户在权限设置中关闭了「允许他人响铃」，则忽略本次请求。
      */
@@ -432,9 +431,9 @@ public class LocationReportService extends Service {
                 .setPackage(getPackageName())
                 .putExtra("name", fromName));
         ringActive = true;
-        // 30 秒后自动停止
+        // 达到设置时长后自动停止（至少 5 秒，避免误设为 0）
         ringHandler.removeCallbacks(ringStopRunnable);
-        ringHandler.postDelayed(ringStopRunnable, RING_DURATION_MS);
+        ringHandler.postDelayed(ringStopRunnable, Math.max(5000, prefs.ringDurationMs()));
     }
 
     /** 静音/振动模式下临时把闹钟音量抬到 60%，确保响铃能听到；结束后在 stopRing 恢复 */

@@ -272,11 +272,30 @@ public final class Api {
         enqueue(req, cb);
     }
 
+    /** 瞬时网络/DNS 错误的最大重试次数 */
+    private static final int MAX_RETRY = 2;
+    /** 每次重试的递增延迟基础（毫秒） */
+    private static final long RETRY_DELAY_MS = 1000;
+
     private static void enqueue(Request req, Callback cb) {
+        enqueueWithRetry(req, cb, 0);
+    }
+
+    private static void enqueueWithRetry(final Request req, final Callback cb, final int attempt) {
         client.newCall(req).enqueue(new okhttp3.Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                cb.onError(e.getMessage() == null ? "网络错误" : e.getMessage());
+                if (isTransientNetError(e) && attempt < MAX_RETRY) {
+                    // 瞬时网络/DNS 抖动（如偶发 Unable to resolve host）：退避后重试
+                    try {
+                        Thread.sleep(RETRY_DELAY_MS * (attempt + 1));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                    enqueueWithRetry(req, cb, attempt + 1);
+                    return;
+                }
+                cb.onError(netMessage(e));
             }
 
             @Override
@@ -295,6 +314,25 @@ public final class Api {
                 }
             }
         });
+    }
+
+    /** 是否属于可重试的瞬时网络/DNS 错误 */
+    private static boolean isTransientNetError(IOException e) {
+        return e instanceof java.net.UnknownHostException
+                || e instanceof java.net.ConnectException
+                || e instanceof java.net.SocketTimeoutException
+                || e instanceof java.net.SocketException;
+    }
+
+    /** 把网络/DNS 错误转成更易懂的提示 */
+    private static String netMessage(IOException e) {
+        if (e instanceof java.net.UnknownHostException) {
+            return "域名解析失败，请检查网络或 DNS";
+        }
+        if (e instanceof java.net.ConnectException) {
+            return "无法连接服务器";
+        }
+        return e.getMessage() == null ? "网络错误" : e.getMessage();
     }
 
     private static String json(Object... kv) {

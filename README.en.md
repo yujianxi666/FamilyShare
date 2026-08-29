@@ -9,6 +9,7 @@ A **private family location sharing** app: family members join the same family b
 - 📱 Client: `android/` (native Android, Java, AMap 3D Map 9.8.3 + OkHttp)
 - ☕ Server: `server/` (Java / Spring Boot 3.3.4, REST + WebSocket, Redis persistence)
 - 📄 Docs: `docs/` (protocol, AMap key guide, icon)
+- 🌐 Website: [https://fms.uiero.com](https://fms.uiero.com)
 
 > Built as a **family/self-hosted** project: there is **no account system** (`deviceId` is the identity, the family code is the credential), and location data is stored **only on your own server**. For production, put it behind HTTPS/WSS and set a strong API token.
 
@@ -31,6 +32,8 @@ A **private family location sharing** app: family members join the same family b
 | Message center | Join requests (owner approves/rejects) and join invitations |
 | In-app update | Silent check on boot + ⋮ "Check update"; MD5 comparison; progress + verify + one-tap install |
 | Bug feedback | ⋮ "Report bug" → written to `server/bugs.json`, with an admin page at `/bugadmin/<token>` |
+| Server switch | ⋮ menu "Switch server": pick the official server (address hidden) or a custom one (address shown); add (host/IP + optional port + http/https) and delete; defaults to official; auto-reconnects on switch |
+| Network retry | Auto-retries transient network/DNS errors a few times and shows friendlier messages (e.g., "Domain resolution failed, check network or DNS") |
 
 ---
 
@@ -144,6 +147,12 @@ Follow [`docs/SETUP_AMAP.md`](docs/SETUP_AMAP.md) to request and configure it (A
 
 ---
 
+## 📮 Provide a server
+
+If you are willing to provide a server for this project, feel free to contact: **3557665817@qq.com**.
+
+---
+
 ## 📄 License
 
 Released under the [MIT License](LICENSE).
@@ -151,5 +160,13 @@ Released under the [MIT License](LICENSE).
 > ⚠️ If you publish on an app store, note the AMap SDK's commercial terms may differ from the open-source license — verify before publishing.
 
 ---
+
+## 📋 Changelog
+
+- 2026.08.29 Updated: homepage now reflects the current features (tracks with a green start point; new sections for blacklist / message center / in-app update / server switch); added an official website link to the README and unified the project name to 家庭共享. ----- Committed 2026.08.29
+- 2026.08.29 Updated: tracks now use a single green start point instead of direction arrows; the homepage gained a GitHub repo link and a "self-host" note; ring duration is customizable (10/30/60/90/120 s or custom 1-300 s); ring state is refreshed on app open so the "stop ring" button is visible. ----- Committed 2026.08.29
+- 2026.08.29 Updated: server switch (⋮ "Switch server": pick official/custom, add/delete); network layer auto-retries transient network/DNS errors with friendlier messages. Fixed: dots disappearing after server switch, DNS resolution failures on some users. ----- Committed 2026.08.29
+- 2026.08.29 Updated: removed observer-mode leftover code; family dialog defaults to "Join" and shows the code field immediately; auto-requests everyone's location on app open; auto-start management now guides a search. Fixed: not seeing other members after joining, code input field that needed a toggle. ----- Committed 2026.08.29
+- 2026.08.29 Open-source prep: added README (ZH/EN), LICENSE (MIT), .gitignore; de-sensitized keys/tokens/domain; added a "provide a server" contact. ----- Committed 2026.08.29
 
 **Star ⭐ if this helps you!**

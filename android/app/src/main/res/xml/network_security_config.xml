@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 生产环境：仅允许 HTTPS/WSS，禁止明文 HTTP。 -->
+<!-- 允许明文 HTTP（为支持用户自定义的 http/IP 服务器）；官方 https 仍可用。
+     若只走 HTTPS/WSS，可把下面改回 cleartextTrafficPermitted="false"。 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false" />
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

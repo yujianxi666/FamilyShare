@@ -148,6 +148,9 @@ public class MainActivity extends AppCompatActivity {
     /** 消息中心对话框 */
     private AlertDialog messageDialog;
 
+    /** 服务器切换对话框 */
+    private AlertDialog serverDialog;
+
     /** 头像选择（Activity Result API，替代已过时的 startActivityForResult） */
     private final ActivityResultLauncher<String> avatarPicker = registerForActivityResult(
             new ActivityResultContracts.GetContent(), uri -> {
@@ -180,8 +183,8 @@ public class MainActivity extends AppCompatActivity {
 
     // 轨迹线（成员轨迹连线）
     private final Map<String, Polyline> trackLines = new HashMap<>();
-    /** 轨迹指向箭头（每条轨迹上的方向标记，随轨迹线增删） */
-    private final Map<String, List<Marker>> trackArrows = new HashMap<>();
+    /** 轨迹起点标记（每条轨迹一个单独的绿色起点，随轨迹线增删） */
+    private final Map<String, Marker> trackStartMarkers = new HashMap<>();
     /** 详情页高亮的轨迹线（加粗显示），关闭详情时还原 */
     private Polyline highlightTrack;
     /** 当前被高亮轨迹的成员 deviceId（列表刷新后重新加粗） */
@@ -194,6 +197,8 @@ public class MainActivity extends AppCompatActivity {
     private String myDeviceId = "";
     /** 打开/回到前台时，若在多人家庭则自动向全员请求一次实时位置（只在一次成员列表渲染后消费，用底部 toast 提示、不弹窗） */
     private boolean entryRefreshArmed;
+    /** 最近一次切换服务器的时间戳：用于防止切换后成员列表被清空导致绿点消失 */
+    private long serverSwitchAt;
 
     /** 消息中心条目：joinRequest=入群申请（群主审批），invite=加入邀请 */
     private static class MessageItem {
@@ -469,6 +474,8 @@ public class MainActivity extends AppCompatActivity {
         filter.addAction(AppConfig.BROADCAST_JOIN_REQUEST);
         // 广播均来自本应用自身，声明 NOT_EXPORTED 兼容 Android 13+
         ContextCompat.registerReceiver(this, uiReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
+        // 打开/回到前台：查询当前响铃状态，若正在响铃则显示「关闭响铃」按钮，避免不知如何关闭
+        sendToService(AppConfig.ACTION_QUERY_RING);
         // 打开/回到前台：若在多人家庭，列出成员后自动向全员请求一次实时位置（底部 toast 提示，不弹窗）
         entryRefreshArmed = true;
         // 回到前台时刷新一次状态
@@ -728,11 +735,28 @@ public class MainActivity extends AppCompatActivity {
 
     /** 用服务器返回的成员列表整体刷新成员/标记/列表（fitCamera 控制是否移动视野） */
     private void applyMemberList(List<Member> list, boolean fitCamera) {
+        // 切换服务器后：若新服务器一时返回空列表/尚未就绪，保留上一次成员列表，避免绿点整体消失
+        if (System.currentTimeMillis() - serverSwitchAt < 5000 && list.isEmpty() && !members.isEmpty()) {
+            toast(getString(R.string.toast_server_empty));
+            refreshAdapter();
+            return;
+        }
+        // 记录切换前各成员的上线/位置状态，用于重连瞬间“保活”绿点，避免闪烁
+        Map<String, Member> prev = new HashMap<>(members);
         members.clear();
         Set<String> ids = new HashSet<>();
         for (Member m : list) {
             if (m.deviceId.isEmpty()) {
                 continue;
+            }
+            // 服务器切换/重连瞬间：新列表可能因 WS 尚未连上而把成员标记为离线；
+            // 若该成员此前在线、且刚上报过位置（2 分钟内），保持绿点在线，避免闪烁
+            if (!m.online) {
+                Member old = prev.get(m.deviceId);
+                if (old != null && old.online && old.hasLocation
+                        && (System.currentTimeMillis() - old.ts) < 120_000) {
+                    m.online = true;
+                }
             }
             ids.add(m.deviceId);
             members.put(m.deviceId, m);
@@ -791,7 +815,7 @@ public class MainActivity extends AppCompatActivity {
             if (p != null) {
                 p.remove();
             }
-            removeTrackArrows(id);
+            removeTrackStart(id);
         }
         // 更新/新增轨迹线
         for (Member m : list) {
@@ -808,7 +832,7 @@ public class MainActivity extends AppCompatActivity {
                         .color(MemberColors.colorFor(m.deviceId)));
                 trackLines.put(m.deviceId, p);
             }
-            updateTrackArrows(m);
+            updateTrackStart(m);
         }
         // 列表刷新后若详情页仍打开，重新加粗该成员轨迹
         if (highlightDeviceId != null && !highlightDeviceId.isEmpty() && isDetailOpen()) {
@@ -816,101 +840,30 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** 移除某成员的全部轨迹箭头 */
-    private void removeTrackArrows(String deviceId) {
-        List<Marker> arrows = trackArrows.remove(deviceId);
-        if (arrows != null) {
-            for (Marker a : arrows) {
-                a.remove();
-            }
-        }
-    }
-
-    /**
-     * 更新某成员的轨迹指向箭头：沿轨迹每隔 N 个点放一个方向箭头，指向行进方向。
-     * 用高德 Marker 的 rotateAngle 旋转箭头图标，使其指向前后两点的方位角。
-     */
-    private void updateTrackArrows(Member m) {
-        removeTrackArrows(m.deviceId);
-        if (!m.track || m.trajectory.size() < 2) {
+    /** 添加/更新某成员轨迹的绿色起点标记（单独的一个绿点） */
+    private void updateTrackStart(Member m) {
+        if (m.trajectory.isEmpty()) {
+            removeTrackStart(m.deviceId);
             return;
         }
-        List<LatLng> pts = m.trajectory;
-        BitmapDescriptor arrowIcon = BitmapDescriptorFactory.fromBitmap(createArrowBitmap());
-        List<Marker> arrows = new ArrayList<>();
-        // 按固定空间间隔（米）布设箭头：密度均匀且紧跟轨迹线，不受点数疏密影响。
-        // 方向取下一段行进方向（a->b），避免跨段跳跃导致箭头方向错乱。
-        int spacing = 50; // 每 50 米放一个方向箭头
-        double acc = 0;
-        for (int i = 0; i + 1 < pts.size(); i++) {
-            LatLng a = pts.get(i);
-            LatLng b = pts.get(i + 1);
-            if (a == null || b == null) {
-                continue;
-            }
-            double d = dist(a, b);
-            if (d <= 0) {
-                continue;
-            }
-            acc += d;
-            if (acc >= spacing) {
-                acc = 0;
-                float bearing = bearing(a, b);
-                Marker arrow = aMap.addMarker(new MarkerOptions()
-                        .position(b)
-                        .icon(arrowIcon)
-                        .anchor(0.5f, 0.5f)
-                        .rotateAngle(bearing));
-                arrows.add(arrow);
-            }
-        }
-        if (!arrows.isEmpty()) {
-            trackArrows.put(m.deviceId, arrows);
+        LatLng start = m.trajectory.get(0);
+        Marker mk = trackStartMarkers.get(m.deviceId);
+        BitmapDescriptor icon = BitmapDescriptorFactory.fromResource(R.drawable.ic_track_start);
+        if (mk == null) {
+            mk = aMap.addMarker(new MarkerOptions().position(start).icon(icon).anchor(0.5f, 0.5f));
+            trackStartMarkers.put(m.deviceId, mk);
+        } else {
+            mk.setPosition(start);
+            mk.setIcon(icon);
         }
     }
 
-    /** 生成向上的箭头位图（作为轨迹方向标记） */
-    private Bitmap createArrowBitmap() {
-        int size = dp(16);
-        Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        android.graphics.Canvas c = new android.graphics.Canvas(bmp);
-        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-        p.setColor(0xFF22C55E);
-        // 上尖三角 + 底部小柄，形成“指向”箭头
-        android.graphics.Path path = new android.graphics.Path();
-        float w = size, h = size;
-        path.moveTo(w / 2f, 0);          // 上尖
-        path.lineTo(w * 0.15f, h * 0.55f);
-        path.lineTo(w * 0.4f, h * 0.55f);
-        path.lineTo(w * 0.4f, h);
-        path.lineTo(w * 0.6f, h);
-        path.lineTo(w * 0.6f, h * 0.55f);
-        path.lineTo(w * 0.85f, h * 0.55f);
-        path.close();
-        c.drawPath(path, p);
-        return bmp;
-    }
-
-    /** 两点间的简易距离（米，近似） */
-    private static double dist(LatLng a, LatLng b) {
-        double R = 6371000;
-        double dLat = Math.toRadians(b.latitude - a.latitude);
-        double dLng = Math.toRadians(b.longitude - a.longitude);
-        double s = Math.sin(dLat / 2) * Math.sin(dLat / 2)
-                + Math.cos(Math.toRadians(a.latitude)) * Math.cos(Math.toRadians(b.latitude))
-                * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-        return 2 * R * Math.asin(Math.sqrt(s));
-    }
-
-    /** 方位角（度，0=北，90=东），用于旋转箭头指向行进方向 */
-    private static float bearing(LatLng a, LatLng b) {
-        double dLat = Math.toRadians(b.latitude - a.latitude);
-        double dLng = Math.toRadians(b.longitude - a.longitude);
-        double y = Math.sin(dLng) * Math.cos(Math.toRadians(b.latitude));
-        double x = Math.cos(Math.toRadians(a.latitude)) * Math.sin(Math.toRadians(b.latitude))
-                - Math.sin(Math.toRadians(a.latitude)) * Math.cos(Math.toRadians(b.latitude)) * Math.cos(dLng);
-        double deg = Math.toDegrees(Math.atan2(y, x));
-        return (float) ((deg + 360) % 360);
+    /** 移除某成员的轨迹起点标记 */
+    private void removeTrackStart(String deviceId) {
+        Marker mk = trackStartMarkers.remove(deviceId);
+        if (mk != null) {
+            mk.remove();
+        }
     }
 
     /** 详情页：加粗高亮某成员的轨迹线 */
@@ -1096,7 +1049,7 @@ public class MainActivity extends AppCompatActivity {
         if (pl != null) {
             pl.remove();
         }
-        removeTrackArrows(deviceId);
+        removeTrackStart(deviceId);
         refreshAdapter();
     }
 
@@ -1122,14 +1075,12 @@ public class MainActivity extends AppCompatActivity {
             p.remove();
         }
         trackLines.clear();
-        for (List<Marker> arrows : trackArrows.values()) {
-            if (arrows != null) {
-                for (Marker a : arrows) {
-                    a.remove();
-                }
+        for (Marker mk : trackStartMarkers.values()) {
+            if (mk != null) {
+                mk.remove();
             }
         }
-        trackArrows.clear();
+        trackStartMarkers.clear();
         clearTrackHighlight();
         refreshAdapter();
         toast(getString(R.string.toast_removed_self));
@@ -1942,6 +1893,225 @@ public class MainActivity extends AppCompatActivity {
         sendToService(AppConfig.ACTION_START);
     }
 
+    // ---------------- 服务器切换 ----------------
+
+    /** 切换服务器对话框：官方(默认，不展示地址) + 自定义(展示地址)；可添加、可选择。默认官方，无确认弹窗。 */
+    private void showServerDialog() {
+        final Prefs prefs = Prefs.get(this);
+        final java.util.List<String[]> servers = prefs.customServers();
+        final int active = prefs.activeServerIndex();
+        LinearLayout ll = new LinearLayout(this);
+        ll.setOrientation(LinearLayout.VERTICAL);
+        ll.setPadding(dp(20), dp(8), dp(20), dp(6));
+
+        ll.addView(serverRow(getString(R.string.server_official), active < 0, () -> selectServer(-1), null));
+        for (int i = 0; i < servers.size(); i++) {
+            String[] s = servers.get(i);
+            final int idx = i;
+            ll.addView(serverRow(AppConfig.buildServerUrl(s[0], s[1], s[2]), active == i, () -> selectServer(idx), () -> deleteServer(idx)));
+        }
+
+        TextView addBtn = new TextView(this);
+        addBtn.setText(getString(R.string.server_add));
+        addBtn.setTextColor(ContextCompat.getColor(this, R.color.primary));
+        addBtn.setTextSize(14f);
+        addBtn.setPadding(0, dp(16), 0, dp(6));
+        addBtn.setOnClickListener(v -> {
+            dismissServerDialog();
+            showAddServerDialog();
+        });
+        ll.addView(addBtn);
+
+        serverDialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.menu_switch_server)
+                .setView(ll)
+                .setNegativeButton(R.string.btn_cancel, null)
+                .create();
+        serverDialog.show();
+    }
+
+    /** 服务器列表行：label + 选中标记 + 可选删除按钮 */
+    private View serverRow(String label, boolean selected, Runnable onTap, Runnable onDelete) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(12), 0, dp(12));
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextSize(15f);
+        tv.setTextColor(ContextCompat.getColor(this, R.color.text_primary));
+        row.addView(tv, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        if (selected) {
+            TextView mark = new TextView(this);
+            mark.setText("✓");
+            mark.setTextSize(16f);
+            mark.setTextColor(ContextCompat.getColor(this, R.color.primary));
+            row.addView(mark);
+        }
+        if (onDelete != null) {
+            TextView del = new TextView(this);
+            del.setText(getString(R.string.server_delete));
+            del.setTextSize(14f);
+            del.setTextColor(0xFFE53935); // 红色
+            del.setPadding(dp(14), 0, 0, 0);
+            del.setOnClickListener(v -> onDelete.run());
+            row.addView(del);
+        }
+        row.setOnClickListener(v -> {
+            if (onTap != null) {
+                onTap.run();
+            }
+        });
+        return row;
+    }
+
+    /** 选择服务器：-1 = 官方；>=0 = customServers 下标。应用后重连服务并刷新。 */
+    private void selectServer(int index) {
+        Prefs p = Prefs.get(this);
+        p.activeServerIndex(index);
+        String url;
+        if (index < 0) {
+            url = AppConfig.OFFICIAL_URL;
+        } else {
+            java.util.List<String[]> list = p.customServers();
+            if (index < list.size()) {
+                String[] s = list.get(index);
+                url = AppConfig.buildServerUrl(s[0], s[1], s[2]);
+            } else {
+                url = AppConfig.OFFICIAL_URL;
+                p.activeServerIndex(-1);
+            }
+        }
+        AppConfig.applyServer(url);
+        dismissServerDialog();
+        toast(getString(R.string.toast_server_switched));
+        sendToService(AppConfig.ACTION_RECONNECT);
+        serverSwitchAt = System.currentTimeMillis();
+        loadMembers();
+    }
+
+    private void dismissServerDialog() {
+        if (serverDialog != null && serverDialog.isShowing()) {
+            serverDialog.dismiss();
+            serverDialog = null;
+        }
+    }
+
+    /** 删除自定义服务器（先确认）；若删除的是当前选中项则自动切回官方 */
+    private void deleteServer(final int index) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.server_delete)
+                .setMessage(R.string.server_delete_confirm)
+                .setPositiveButton(R.string.btn_ok, (d, w) -> {
+                    d.dismiss();
+                    doDeleteServer(index);
+                })
+                .setNegativeButton(R.string.btn_cancel, null)
+                .show();
+    }
+
+    private void doDeleteServer(int index) {
+        Prefs p = Prefs.get(this);
+        java.util.List<String[]> list = new java.util.ArrayList<>(p.customServers());
+        if (index < 0 || index >= list.size()) {
+            return;
+        }
+        list.remove(index);
+        p.customServers(list);
+        int active = p.activeServerIndex();
+        if (active == index) {
+            p.activeServerIndex(-1); // 回到官方
+            AppConfig.applyServer(AppConfig.OFFICIAL_URL);
+            toast(getString(R.string.toast_server_switched));
+            sendToService(AppConfig.ACTION_RECONNECT);
+            serverSwitchAt = System.currentTimeMillis();
+            loadMembers();
+        } else if (active > index) {
+            p.activeServerIndex(active - 1); // 下标前移
+        }
+        dismissServerDialog();
+        showServerDialog(); // 刷新列表
+    }
+
+    /** 添加服务器：域名或IP + 可选端口 + 协议(http/https) */
+    private void showAddServerDialog() {
+        LinearLayout ll = new LinearLayout(this);
+        ll.setOrientation(LinearLayout.VERTICAL);
+        ll.setPadding(dp(20), dp(8), dp(20), dp(8));
+
+        TextView hint = new TextView(this);
+        hint.setText(getString(R.string.server_addr_label));
+        hint.setTextSize(13f);
+        hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+        ll.addView(hint);
+
+        EditText etHost = new EditText(this);
+        etHost.setHint(getString(R.string.server_addr_hint));
+        etHost.setSingleLine(true);
+        etHost.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        ll.addView(etHost);
+
+        EditText etPort = new EditText(this);
+        etPort.setHint(getString(R.string.server_port_hint));
+        etPort.setSingleLine(true);
+        etPort.setInputType(InputType.TYPE_CLASS_NUMBER);
+        ll.addView(etPort);
+
+        RadioGroup rg = new RadioGroup(this);
+        rg.setOrientation(RadioGroup.HORIZONTAL);
+        RadioButton rbHttp = new RadioButton(this);
+        rbHttp.setText(getString(R.string.server_scheme_http));
+        RadioButton rbHttps = new RadioButton(this);
+        rbHttps.setText(getString(R.string.server_scheme_https));
+        rbHttps.setChecked(true);
+        rg.addView(rbHttp);
+        rg.addView(rbHttps);
+        ll.addView(rg);
+
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.server_add)
+                .setView(ll)
+                .setPositiveButton(R.string.btn_ok, null)
+                .setNegativeButton(R.string.btn_cancel, (d, w) -> showServerDialog())
+                .create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn -> {
+            String host = etHost.getText().toString().trim();
+            if (host.isEmpty()) {
+                toast(getString(R.string.hint_server_host));
+                return;
+            }
+            String port = etPort.getText().toString().trim();
+            if (!port.isEmpty()) {
+                try {
+                    Integer.parseInt(port);
+                } catch (Exception e) {
+                    toast(getString(R.string.hint_server_port));
+                    return;
+                }
+            }
+            String scheme = rbHttps.isChecked() ? "https" : "http";
+            dialog.dismiss();
+            addServer(scheme, host, port);
+        }));
+        dialog.show();
+    }
+
+    /** 添加并选中新服务器 */
+    private void addServer(String scheme, String host, String port) {
+        Prefs p = Prefs.get(this);
+        java.util.List<String[]> list = new java.util.ArrayList<>(p.customServers());
+        list.add(new String[]{scheme, host, port});
+        p.customServers(list);
+        int idx = list.size() - 1;
+        p.activeServerIndex(idx);
+        AppConfig.applyServer(AppConfig.buildServerUrl(scheme, host, port));
+        toast(getString(R.string.toast_server_switched));
+        sendToService(AppConfig.ACTION_RECONNECT);
+        serverSwitchAt = System.currentTimeMillis();
+        loadMembers();
+        showServerDialog(); // 刷新列表
+    }
+
     private void sendToService(String action) {
         Intent i = new Intent(this, LocationReportService.class).setAction(action);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -2070,6 +2240,24 @@ public class MainActivity extends AppCompatActivity {
         ringRow.addView(ringSwitch);
         ll.addView(ringRow);
 
+        // 响铃时长（家人让本机响铃时持续多久，可自定义）
+        LinearLayout ringDurRow = new LinearLayout(this);
+        ringDurRow.setOrientation(LinearLayout.HORIZONTAL);
+        ringDurRow.setGravity(Gravity.CENTER_VERTICAL);
+        ringDurRow.setPadding(0, dp(8), 0, dp(8));
+        TextView ringDurTv = new TextView(this);
+        ringDurTv.setText(R.string.perm_ring_duration);
+        ringDurTv.setTextSize(14f);
+        ringDurTv.setTextColor(ContextCompat.getColor(this, R.color.text_primary));
+        ringDurRow.addView(ringDurTv, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        final TextView ringDurValue = new TextView(this);
+        ringDurValue.setText(ringDurationText(Prefs.get(this).ringDurationMs()));
+        ringDurValue.setTextSize(12f);
+        ringDurValue.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+        ringDurRow.addView(ringDurValue);
+        ringDurRow.setOnClickListener(v -> showRingDurationDialog(ringDurValue));
+        ll.addView(ringDurRow);
+
         permDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.btn_battery)
                 .setView(ll)
@@ -2136,6 +2324,71 @@ public class MainActivity extends AppCompatActivity {
         permStatusViews.add(statusTv); // 供从系统设置返回后刷新状态
         row.setOnClickListener(v -> action.run());
         return row;
+    }
+
+    /** 响铃时长展示文本 */
+    private String ringDurationText(long ms) {
+        if (ms <= 0) {
+            return getString(R.string.ring_duration_default);
+        }
+        return (ms / 1000) + getString(R.string.ring_duration_unit);
+    }
+
+    /** 选择响铃时长（预设 + 自定义） */
+    private void showRingDurationDialog(final TextView valueTv) {
+        final long[] msValues = {10000, 30000, 60000, 90000, 120000};
+        String[] opts = new String[msValues.length + 1];
+        for (int i = 0; i < msValues.length; i++) {
+            opts[i] = (msValues[i] / 1000) + getString(R.string.ring_duration_unit);
+        }
+        opts[msValues.length] = getString(R.string.btn_custom);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.perm_ring_duration)
+                .setItems(opts, (d, which) -> {
+                    if (which < msValues.length) {
+                        Prefs.get(this).ringDurationMs(msValues[which]);
+                        valueTv.setText(ringDurationText(msValues[which]));
+                    } else {
+                        showRingDurationCustomDialog(valueTv);
+                    }
+                    d.dismiss();
+                })
+                .setNegativeButton(R.string.btn_cancel, null)
+                .show();
+    }
+
+    /** 自定义响铃时长（输入秒数） */
+    private void showRingDurationCustomDialog(final TextView valueTv) {
+        LinearLayout ll = new LinearLayout(this);
+        ll.setPadding(dp(20), dp(8), dp(20), dp(8));
+        final EditText et = new EditText(this);
+        et.setHint(getString(R.string.hint_ring_duration_seconds));
+        et.setInputType(InputType.TYPE_CLASS_NUMBER);
+        ll.addView(et);
+        AlertDialog d = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.perm_ring_duration)
+                .setView(ll)
+                .setPositiveButton(R.string.btn_ok, null)
+                .setNegativeButton(R.string.btn_cancel, null)
+                .create();
+        d.setOnShowListener(x -> d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
+            String s = et.getText().toString().trim();
+            int sec;
+            try {
+                sec = Integer.parseInt(s);
+            } catch (Exception e) {
+                sec = 0;
+            }
+            if (sec <= 0 || sec > 300) {
+                toast(getString(R.string.hint_ring_duration_invalid));
+                return;
+            }
+            long ms = sec * 1000L;
+            Prefs.get(this).ringDurationMs(ms);
+            valueTv.setText(ringDurationText(ms));
+            d.dismiss();
+        }));
+        d.show();
     }
 
     private void openAppDetails() {
@@ -2247,6 +2500,7 @@ public class MainActivity extends AppCompatActivity {
         items.add(new Object[]{R.drawable.ic_refresh, getString(R.string.menu_refresh), (Runnable) this::refreshEverything});
         items.add(new Object[]{R.drawable.ic_dialpad, getString(R.string.btn_code), (Runnable) this::showCodeDialog});
         items.add(new Object[]{R.drawable.ic_people, getString(R.string.btn_family_setup), (Runnable) this::switchFamilyFlow});
+        items.add(new Object[]{R.drawable.ic_expand_more, getString(R.string.menu_switch_server), (Runnable) this::showServerDialog});
         items.add(new Object[]{R.drawable.ic_stat_location, getString(R.string.menu_avatar), (Runnable) this::pickAvatar});
         items.add(new Object[]{R.drawable.ic_battery, getString(R.string.btn_battery), (Runnable) this::showPermissionsDialog});
         items.add(new Object[]{R.drawable.ic_my_location,
