@@ -163,6 +163,8 @@ Released under the [MIT License](LICENSE).
 
 ## 📋 Changelog
 
+- 2026.08.29 Updated the join request: it now checks on going online and auto-joins once approved; closing the waiting dialog or reopening the app keeps checking. Fixed: users could only join if approved on the spot, and closing the dialog forced a re-apply. ----- Committed 2026.08.29
+- 2026.08.29 Updated: refresh-location feedback now shows a toast at the top; all sub-menu "Cancel" buttons became "Back"; panel swipe directions corrected (collapsed+up expands, expanded+down collapses, expanded+up does nothing); the member list shows at most 4 rows and scrolls for more. ----- Committed 2026.08.29
 - 2026.08.29 Updated: homepage now reflects the current features (tracks with a green start point; new sections for blacklist / message center / in-app update / server switch); added an official website link to the README and unified the project name to 家庭共享. ----- Committed 2026.08.29
 - 2026.08.29 Updated: tracks now use a single green start point instead of direction arrows; the homepage gained a GitHub repo link and a "self-host" note; ring duration is customizable (10/30/60/90/120 s or custom 1-300 s); ring state is refreshed on app open so the "stop ring" button is visible. ----- Committed 2026.08.29
 - 2026.08.29 Updated: server switch (⋮ "Switch server": pick official/custom, add/delete); network layer auto-retries transient network/DNS errors with friendlier messages. Fixed: dots disappearing after server switch, DNS resolution failures on some users. ----- Committed 2026.08.29

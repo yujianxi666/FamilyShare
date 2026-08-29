@@ -237,7 +237,8 @@
     <string name="join_reject">拒绝</string>
     <string name="toast_join_request_added">收到新的加入家庭申请</string>
     <string name="toast_invite_received">收到新的加入家庭邀请</string>
-    <string name="toast_join_pending">已提交加入申请，等待群主同意…</string>
+    <string name="toast_join_pending">已提交加入申请。群主同意后会提示并自动加入；可先关闭此窗口，之后打开也会自动加入。</string>
+    <string name="toast_join_still_pending">已提交申请，群主同意后会自动加入</string>
     <string name="join_wait_title">等待群主同意</string>
     <string name="toast_join_approved">群主已同意，已加入家庭</string>
     <string name="toast_join_rejected">群主拒绝了本次加入申请</string>

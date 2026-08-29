@@ -974,12 +974,12 @@ public class MainActivity extends AppCompatActivity {
                             if (pendingFocusDeviceId.equals(m.deviceId)) {
                                 pendingFocusDeviceId = "";
                             }
-                            toast(getString(R.string.toast_target_offline, m.name));
+                            toastTop(getString(R.string.toast_target_offline, m.name));
                         } else {
-                            toast(getString(R.string.toast_report_requested, m.name));
+                            toastTop(getString(R.string.toast_report_requested, m.name));
                         }
                     } catch (Exception e) {
-                        toast(getString(R.string.toast_report_requested, m.name));
+                        toastTop(getString(R.string.toast_report_requested, m.name));
                     }
                 });
                 // 兜底：几秒后静默重拉一次成员列表，确保拿到最新位置
@@ -1016,7 +1016,7 @@ public class MainActivity extends AppCompatActivity {
                 .setMessage(getString(R.string.member_action_remove_confirm, m.name))
                 .setPositiveButton(R.string.option_remove_ban, (d, w) -> removeMember(m, true))
                 .setNeutralButton(R.string.option_remove_only, (d, w) -> removeMember(m, false))
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -1195,7 +1195,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.invite_prompt_title)
                 .setMessage(R.string.invite_prompt_message)
                 .setPositiveButton(R.string.btn_ok, (d, w) -> showInviteSelectDialog(oldMembers, code))
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -1232,7 +1232,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.invite_select_title)
                 .setView(sv)
                 .setPositiveButton(R.string.invite_send, (d, w) -> sendInvites(checked, code))
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -1463,7 +1463,7 @@ public class MainActivity extends AppCompatActivity {
         messageDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.messages_title)
                 .setView(sv)
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -1524,7 +1524,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.bug_dialog_title)
                 .setView(fl)
                 .setPositiveButton(R.string.bug_submit, (d, w) -> submitBug(et.getText().toString().trim()))
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -1583,15 +1583,22 @@ public class MainActivity extends AppCompatActivity {
 
     // ---------------- 加入家庭：等待群主同意 ----------------
 
-    /** 提交加入申请后进入等待审批状态：弹进度框轮询，群主同意后才真正加入 */
+    /** 提交加入申请后进入等待审批状态：持久化申请，上线时自动检查，群主同意后才真正加入 */
     private void startPendingJoinFlow(final String requestId) {
+        // 持久化待审批申请：关掉弹窗/重开 App 后，上线时仍会继续检查审批结果
+        Prefs.get(this).pendingJoinRequestId(requestId);
         final AlertDialog wait = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.join_wait_title)
                 .setMessage(getString(R.string.toast_join_pending))
                 .setCancelable(true)
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .create();
-        wait.setOnDismissListener(d -> mainHandler.removeCallbacks(pendingJoinRunnable));
+        // 关掉弹窗不清除申请：只要还没被处理，上线时仍会检查是否已被同意
+        wait.setOnDismissListener(d -> {
+            if (!pendingJoinRequestId.isEmpty()) {
+                toast(getString(R.string.toast_join_still_pending));
+            }
+        });
         wait.show();
 
         pendingJoinRequestId = requestId;
@@ -1599,6 +1606,20 @@ public class MainActivity extends AppCompatActivity {
         pendingJoinAttempts = 0;
         mainHandler.removeCallbacks(pendingJoinRunnable);
         mainHandler.post(pendingJoinRunnable);
+    }
+
+    /** 重开/回到前台（上线）时：若还有未处理的入群申请且尚未加入家庭，则恢复审批检查 */
+    private void resumePendingJoinIfAny() {
+        if (!pendingJoinRequestId.isEmpty()) {
+            return;
+        }
+        String saved = Prefs.get(this).pendingJoinRequestId();
+        if (!saved.isEmpty() && Prefs.get(this).familyId().isEmpty()) {
+            pendingJoinRequestId = saved;
+            pendingJoinAttempts = 0;
+            mainHandler.removeCallbacks(pendingJoinRunnable);
+            mainHandler.post(pendingJoinRunnable);
+        }
     }
 
     private final AlertDialog[] pendingJoinWaitDialog = {null};
@@ -1637,6 +1658,7 @@ public class MainActivity extends AppCompatActivity {
                                 loadMembers();
                                 pendingJoinRequestId = "";
                                 pendingJoinAttempts = 0;
+                                Prefs.get(MainActivity.this).pendingJoinRequestId("");
                                 if (pendingJoinWaitDialog[0] != null) {
                                     pendingJoinWaitDialog[0].dismiss();
                                     pendingJoinWaitDialog[0] = null;
@@ -1645,6 +1667,7 @@ public class MainActivity extends AppCompatActivity {
                             } else if ("rejected".equals(status)) {
                                 pendingJoinRequestId = "";
                                 pendingJoinAttempts = 0;
+                                Prefs.get(MainActivity.this).pendingJoinRequestId("");
                                 if (pendingJoinWaitDialog[0] != null) {
                                     pendingJoinWaitDialog[0].dismiss();
                                     pendingJoinWaitDialog[0] = null;
@@ -1677,6 +1700,7 @@ public class MainActivity extends AppCompatActivity {
     private void stopPendingJoinFlow(int toastRes) {
         pendingJoinRequestId = "";
         pendingJoinAttempts = 0;
+        Prefs.get(this).pendingJoinRequestId("");
         if (pendingJoinWaitDialog[0] != null) {
             pendingJoinWaitDialog[0].dismiss();
             pendingJoinWaitDialog[0] = null;
@@ -1869,7 +1893,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.dialog_code_title)
                 .setView(v)
                 .setPositiveButton(R.string.btn_copy, (d, w) -> copyCode(prefs.familyCode()))
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -1925,7 +1949,7 @@ public class MainActivity extends AppCompatActivity {
         serverDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.menu_switch_server)
                 .setView(ll)
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .create();
         serverDialog.show();
     }
@@ -2006,7 +2030,7 @@ public class MainActivity extends AppCompatActivity {
                     d.dismiss();
                     doDeleteServer(index);
                 })
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -2072,7 +2096,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.server_add)
                 .setView(ll)
                 .setPositiveButton(R.string.btn_ok, null)
-                .setNegativeButton(R.string.btn_cancel, (d, w) -> showServerDialog())
+                .setNegativeButton(R.string.btn_back, (d, w) -> showServerDialog())
                 .create();
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn -> {
             String host = etHost.getText().toString().trim();
@@ -2183,7 +2207,7 @@ public class MainActivity extends AppCompatActivity {
                         ActivityCompat.requestPermissions(this,
                                 new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},
                                 REQ_PERMISSION_BG))
-                .setNegativeButton(R.string.btn_cancel, (d, w) -> firstRunStepDone())
+                .setNegativeButton(R.string.btn_back, (d, w) -> firstRunStepDone())
                 .show();
     }
 
@@ -2261,7 +2285,7 @@ public class MainActivity extends AppCompatActivity {
         permDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.btn_battery)
                 .setView(ll)
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .create();
         permDialog.show();
     }
@@ -2353,7 +2377,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                     d.dismiss();
                 })
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -2369,7 +2393,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.perm_ring_duration)
                 .setView(ll)
                 .setPositiveButton(R.string.btn_ok, null)
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .create();
         d.setOnShowListener(x -> d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
             String s = et.getText().toString().trim();
@@ -2424,7 +2448,7 @@ public class MainActivity extends AppCompatActivity {
                         toast(getString(R.string.toast_open_url_failed));
                     }
                 })
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -2663,7 +2687,7 @@ public class MainActivity extends AppCompatActivity {
                         banDialog = new MaterialAlertDialogBuilder(MainActivity.this)
                                 .setTitle(R.string.banlist_title)
                                 .setView(sv)
-                                .setNegativeButton(R.string.btn_cancel, (d, w) -> {
+                                .setNegativeButton(R.string.btn_back, (d, w) -> {
                                     if (banDialog != null) {
                                         banDialog = null;
                                     }
@@ -2892,6 +2916,11 @@ public class MainActivity extends AppCompatActivity {
                     float dy = ev.getRawY() - downRawY;
                     if (!dragging && Math.abs(dy) > ViewConfiguration
                             .get(MainActivity.this).getScaledTouchSlop()) {
+                        // 方向匹配才拖拽：收起态上拉展开、展开态下拉收缩；展开态上拉不触发（避免误收缩）
+                        boolean dirOk = panelCollapsed ? dy < 0 : dy > 0;
+                        if (!dirOk) {
+                            return false;
+                        }
                         dragging = true;
                         dragStartCollapsed = panelCollapsed;
                         dragMaxTranslate = panelMaxTranslate();
@@ -3283,7 +3312,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                     submitTrack(m, true, interval);
                 })
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -3388,7 +3417,7 @@ public class MainActivity extends AppCompatActivity {
             toast(getString(R.string.toast_no_other_members));
             return;
         }
-        toast(getString(R.string.toast_refresh_all_sent));
+        toastTop(getString(R.string.toast_refresh_all_sent));
         // 兜底：几秒后静默重拉一次成员列表
         scheduleMembersRefresh();
     }
@@ -3466,7 +3495,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.avatar_crop_title)
                 .setView(ll)
                 .setPositiveButton(R.string.btn_ok, (d, w) -> uploadAvatar(crop.crop()))
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -3559,7 +3588,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.transfer_owner_select_title)
                 .setMessage(R.string.transfer_owner_message)
                 .setView(ll)
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -3648,7 +3677,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(R.string.dialog_update_title)
                 .setMessage(getString(R.string.dialog_update_message, versionName, note))
                 .setPositiveButton(R.string.btn_update_now, (d, w) -> downloadAndInstall(url, serverMd5))
-                .setNegativeButton(R.string.btn_cancel, null)
+                .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
 
@@ -3664,7 +3693,7 @@ public class MainActivity extends AppCompatActivity {
                         } catch (Exception ignored) {
                         }
                     })
-                    .setNegativeButton(R.string.btn_cancel, null)
+                    .setNegativeButton(R.string.btn_back, null)
                     .show();
             return;
         }
@@ -3724,7 +3753,7 @@ public class MainActivity extends AppCompatActivity {
         downloadDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.dialog_update_title)
                 .setView(v)
-                .setNegativeButton(R.string.btn_cancel, (d, w) -> {
+                .setNegativeButton(R.string.btn_back, (d, w) -> {
                     downloadCancelled = true;
                     if (downloadCall != null) {
                         downloadCall.cancel();
@@ -3822,5 +3851,12 @@ public class MainActivity extends AppCompatActivity {
 
     private void toast(String msg) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+    }
+
+    /** 顶部提示：位于屏幕上方，不会被底部面板/详情遮挡（用于刷新位置等反馈） */
+    private void toastTop(String msg) {
+        Toast t = Toast.makeText(this, msg, Toast.LENGTH_SHORT);
+        t.setGravity(Gravity.TOP, 0, dp(120));
+        t.show();
     }
 }

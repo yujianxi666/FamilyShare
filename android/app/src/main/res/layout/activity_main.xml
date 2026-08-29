@@ -171,7 +171,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:clipToPadding="false"
-                android:maxHeight="200dp"
+                android:maxHeight="250dp"
                 android:overScrollMode="never" />
 
             <TextView

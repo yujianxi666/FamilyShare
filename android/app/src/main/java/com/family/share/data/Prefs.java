@@ -64,6 +64,15 @@ public class Prefs {
         sp.edit().putString("family_code", code).apply();
     }
 
+    /** 待群主同意的入群申请 requestId（空=无待审批申请）；关掉等待弹窗/重开 App 后，上线时继续检查审批结果 */
+    public String pendingJoinRequestId() {
+        return sp.getString("pending_join_request_id", "");
+    }
+
+    public void pendingJoinRequestId(String id) {
+        sp.edit().putString("pending_join_request_id", id == null ? "" : id).apply();
+    }
+
     /** 是否是家庭创建者（拥有移出成员的权限） */
     public boolean isOwner() {
         return sp.getBoolean("is_owner", false);
