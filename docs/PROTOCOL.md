@@ -33,7 +33,7 @@
 | GET | `/bugadmin/{token}` | - | Bug 管理网页，须带路径口令（如 `/bugadmin/YOUR_SECRET`） |
 | GET | `/api/health` | - | `{status:"ok", time}` |
 
-> **访问口令**：白名单 `/api/health`、`/downloads/**`、`/bugadmin/**` 外，其余 `/api/**`、`/ws`、`/icons/**` 都必须在请求头 `X-Api-Token` 或查询参数 `token` 携带访问口令（服务端 `app.api-token`、客户端 `API_TOKEN`，需一致）。观察模式（`/api/observer/*`、`Aphasia2901`）已移除。
+> **访问口令**：白名单 `/api/health`、`/downloads/**`、`/bugadmin/**` 外，其余 `/api/**`、`/ws`、`/icons/**` 都必须在请求头 `X-Api-Token` 或查询参数 `token` 携带访问口令（服务端 `app.api-token`、客户端 `API_TOKEN`，需一致）。
 
 `location`：`{lat,lng,accuracy,ts,battery(-1=未知),network("WiFi（SSID）"/移动网络/无网络),address("省市区街道")}`
 `trajectory`：`[{lat,lng,accuracy,ts,...}]`（仅 `track=true` 返回，最多 300 点）
