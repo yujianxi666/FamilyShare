@@ -89,6 +89,7 @@
     <string name="toast_locating">正在定位…</string>
     <string name="toast_my_location_updated">已定位到我的位置</string>
     <string name="toast_location_failed">定位失败，请检查定位权限/信号</string>
+    <string name="toast_location_updated">%1$s 的位置已更新</string>
 
     <!-- 通知 -->
     <string name="notification_channel_name">位置共享服务</string>

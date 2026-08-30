@@ -125,6 +125,9 @@ public class MainActivity extends AppCompatActivity {
     private float memberDownY;
     /** 本次列表下拉是否已触发过收缩（防止一次拖动重复触发） */
     private boolean listPullHandled;
+    /** 按下瞬间成员列表是否已在顶部：只有“按下时已在顶部”的下拉才触发收缩；
+     *  下拉过程中滚到顶部不收缩，需“到顶后再往下拉一次”才收缩（避免滚到顶部就误收起）。 */
+    private boolean memberListAtTop;
     /** 成员人数简洁标签（如“家庭成员（3）”） */
     private TextView tvMemberCount;
 
@@ -200,6 +203,13 @@ public class MainActivity extends AppCompatActivity {
     /** 最近一次切换服务器的时间戳：用于防止切换后成员列表被清空导致绿点消失 */
     private long serverSwitchAt;
 
+    /** 家人列表最多同时显示的成员行数：超过则可上下滚动，滚到顶部后下拉收起面板 */
+    private static final int MAX_VISIBLE_MEMBERS = 4;
+    /** 单行成员的高度（px），首次需要固定列表高度时按样例项测量一次 */
+    private int memberRowHeightPx;
+    /** 上一帧「位置更新」文字提示时间戳：限制频率，避免多成员同时上报时连续弹多个提示 */
+    private long lastLocationUpdateToastAt;
+
     /** 消息中心条目：joinRequest=入群申请（群主审批），invite=加入邀请 */
     private static class MessageItem {
         final String type;
@@ -244,6 +254,15 @@ public class MainActivity extends AppCompatActivity {
                 }
                 // 若用户刚点击了该成员（等待实时位置），收到新位置时自动跳转过去
                 applyMember(m, m.deviceId.equals(pendingFocusDeviceId));
+                // 文字反馈：家人位置更新时提示「xxx 的位置已更新」（自己跳过；限频避免多成员同时上报时连续弹多个）
+                if (!m.deviceId.equals(myDeviceId)) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastLocationUpdateToastAt >= 1500) {
+                        lastLocationUpdateToastAt = now;
+                        String nm = (m.name != null && !m.name.isEmpty()) ? m.name : m.deviceId;
+                        toastTop(getString(R.string.toast_location_updated, nm));
+                    }
+                }
             } else if (AppConfig.BROADCAST_MEMBER_STATUS.equals(action)) {
                 if (intent.getBooleanExtra("trackChanged", false)) {
                     // 轨迹开关变化 -> 重拉成员列表刷新轨迹线
@@ -371,6 +390,9 @@ public class MainActivity extends AppCompatActivity {
         PanelDragTouchListener dragListener = new PanelDragTouchListener();
         // 标题栏 + 灰色小横条：按下拖动可收缩/展开面板
         panelHeader.setOnTouchListener(dragListener);
+        // 让标题行可点击：clickable 视图会把 DOWN 之后的 MOVE/UP 也交给 OnTouchListener，
+        // 从而使「灰条那一行任意位置」都能上滑展开面板（否则非 clickable 的标题行收不到后续拖动事件）。
+        panelHeader.setClickable(true);
         dragHandle.setOnTouchListener(dragListener);
         // 详情页：在详情任意区域下拉即可收缩详情（不返回列表）
         detailArea.setOnTouchListener(dragListener);
@@ -380,13 +402,15 @@ public class MainActivity extends AppCompatActivity {
                 case MotionEvent.ACTION_DOWN:
                     memberDownY = ev.getRawY();
                     listPullHandled = false;
+                    // 记录按下瞬间列表是否已在顶部：收缩只在“本就已在顶部，再下拉”时触发
+                    memberListAtTop = !memberList.canScrollVertically(-1);
                     return false;
                 case MotionEvent.ACTION_MOVE:
                     if (listPullHandled) {
                         // 已触发收缩：本次手势的后续 move 一律消费，避免污染 RecyclerView 手势状态导致下次失效
                         return true;
                     }
-                    if (!isDetailOpen() && !memberList.canScrollVertically(-1)
+                    if (!isDetailOpen() && memberListAtTop
                             && ev.getRawY() - memberDownY > ViewConfiguration.get(MainActivity.this).getScaledTouchSlop()) {
                         listPullHandled = true;
                         // 平滑下拉收缩（带动画，避免生硬）
@@ -919,6 +943,42 @@ public class MainActivity extends AppCompatActivity {
         boolean empty = members.isEmpty();
         tvEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
         memberList.setVisibility(empty ? View.GONE : View.VISIBLE);
+        updateMemberListHeight();
+    }
+
+    /**
+     * 成员列表高度限制：最多同时显示 MAX_VISIBLE_MEMBERS 行，多余的可上下滚动；
+     * 人数不足时用自然高度（wrap_content）。固定为 4 行高度，方可让 RecyclerView 真正可滚动、
+     * 并在「滚到顶部后继续下拉」时触发面板收起（见 memberList 的 onTouch 监听）。
+     */
+    private void updateMemberListHeight() {
+        if (memberList == null) {
+            return;
+        }
+        int count = adapter.getItemCount();
+        ViewGroup.LayoutParams lp = memberList.getLayoutParams();
+        if (lp == null) {
+            return;
+        }
+        if (count <= MAX_VISIBLE_MEMBERS) {
+            if (lp.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                memberList.setLayoutParams(lp);
+            }
+            return;
+        }
+        if (memberRowHeightPx <= 0) {
+            View sample = getLayoutInflater().inflate(R.layout.item_member, memberList, false);
+            int w = memberList.getWidth() > 0 ? memberList.getWidth() : dp(320);
+            sample.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            memberRowHeightPx = sample.getMeasuredHeight() > 0 ? sample.getMeasuredHeight() : dp(62);
+        }
+        int targetH = memberRowHeightPx * MAX_VISIBLE_MEMBERS;
+        if (lp.height != targetH) {
+            lp.height = targetH;
+            memberList.setLayoutParams(lp);
+        }
     }
 
     private void fitCameraToMembers() {

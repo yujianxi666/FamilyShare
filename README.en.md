@@ -163,6 +163,8 @@ Released under the [MIT License](LICENSE).
 
 ## 📋 Changelog
 
+- 2026.08.30 Refined when the list collapses on pull-down: it only collapses when the list is already at the top and you pull down again. The pull that scrolls the list up to the top does not collapse (you must reach the top, then pull down once more), and swiping up can no longer collapse the panel. ----- Committed 2026.08.30
+- 2026.08.30 Refined the refresh & panel interaction: a top toast now says "xxx's location updated" when a family member's position updates (rate-limited to avoid a burst of toasts); swiping up while expanded now only scrolls the member list and no longer collapses the panel; the grey handle row expands on swipe-up from anywhere on it; the member list shows at most 4 rows and scrolls for more, and pulling down after reaching the top collapses the panel. ----- Committed 2026.08.30
 - 2026.08.29 Updated the join request: it now checks on going online and auto-joins once approved; closing the waiting dialog or reopening the app keeps checking. Fixed: users could only join if approved on the spot, and closing the dialog forced a re-apply. ----- Committed 2026.08.29
 - 2026.08.29 Updated: refresh-location feedback now shows a toast at the top; all sub-menu "Cancel" buttons became "Back"; panel swipe directions corrected (collapsed+up expands, expanded+down collapses, expanded+up does nothing); the member list shows at most 4 rows and scrolls for more. ----- Committed 2026.08.29
 - 2026.08.29 Updated: homepage now reflects the current features (tracks with a green start point; new sections for blacklist / message center / in-app update / server switch); added an official website link to the README and unified the project name to 家庭共享. ----- Committed 2026.08.29
