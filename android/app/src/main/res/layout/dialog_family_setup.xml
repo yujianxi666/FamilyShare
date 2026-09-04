@@ -64,4 +64,18 @@
         android:maxLength="6"
         android:visibility="gone" />
 
+    <!-- 扫码加入：灰色小字，仅加入家庭模式下显示；点击才请求相机权限并启动扫码 -->
+    <TextView
+        android:id="@+id/tvScanJoin"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:paddingEnd="8dp"
+        android:text="@string/scan_join"
+        android:textColor="@color/text_secondary"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
 </LinearLayout>

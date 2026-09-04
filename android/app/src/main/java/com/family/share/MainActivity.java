@@ -87,6 +87,9 @@ import com.family.share.ui.MemberColors;
 import com.family.share.ui.ScaleLineDrawable;
 import com.family.share.util.AvatarLoader;
 import com.family.share.util.DeviceInfo;
+import com.family.share.util.QrCode;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -171,6 +174,40 @@ public class MainActivity extends AppCompatActivity {
                     toast(getString(R.string.toast_avatar_decode_failed));
                 }
             });
+
+    // ---- 二维码：家庭码展示（生成）+ 加入家庭页「扫码加入」（权限仅点击时申请） ----
+    /** 扫码共享句柄：joinCode=加入对话框的家庭码输入框，扫码成功后把识别到的码填进去 */
+    private final FamilySetupDialog.ScanToken familyScanToken = new FamilySetupDialog.ScanToken();
+    /** 扫码结果：识别到二维码后把家庭码写入加入对话框的输入框 */
+    private final ActivityResultLauncher<ScanOptions> scanLauncher = registerForActivityResult(
+            new ScanContract(), result -> {
+                String code = result.getContents();
+                if (code != null && familyScanToken.joinCode != null) {
+                    familyScanToken.joinCode.setText(code.trim());
+                    toast(getString(R.string.toast_code_scanned));
+                }
+            });
+    /** 相机权限：只在点击「扫码加入」后才请求；授权成功后若在等待扫码则自动启动扫码 */
+    private final ActivityResultLauncher<String> cameraPermLauncher = registerForActivityResult(
+            new ActivityResultContracts.RequestPermission(), granted -> {
+                if (granted) {
+                    if (familyScanToken.pendingScan) {
+                        familyScanToken.pendingScan = false;
+                        scanLauncher.launch(scanOptions());
+                    }
+                } else {
+                    toast(getString(R.string.toast_need_camera_permission));
+                }
+            });
+
+    /** 二维码扫码参数：仅识别二维码 QR_CODE，竖向锁定 */
+    private ScanOptions scanOptions() {
+        return new ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt(getString(R.string.scan_prompt))
+                .setBeepEnabled(false)
+                .setOrientationLocked(true);
+    }
 
     // 面板收缩（灰色小横条 + 下滑/上滑手势）
     private View bottomPanel;
@@ -947,9 +984,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * 成员列表高度限制：最多同时显示 MAX_VISIBLE_MEMBERS 行，多余的可上下滚动；
-     * 人数不足时用自然高度（wrap_content）。固定为 4 行高度，方可让 RecyclerView 真正可滚动、
-     * 并在「滚到顶部后继续下拉」时触发面板收起（见 memberList 的 onTouch 监听）。
+     * 成员列表高度限制：最多同时显示 MAX_VISIBLE_MEMBERS 行；超过时固定为
+     * 「4 行 + 下一行露出一半」的高度，让第 5 个成员被裁掉一半露出来作为「还有更多」的滚动提示，
+     * 同时保持可上下滚动（并在「滚到顶部后继续下拉」时触发面板收起，见 memberList 的 onTouch 监听）。
+     * 人数不足时用自然高度（wrap_content）。
      */
     private void updateMemberListHeight() {
         if (memberList == null) {
@@ -974,7 +1012,8 @@ public class MainActivity extends AppCompatActivity {
                     View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
             memberRowHeightPx = sample.getMeasuredHeight() > 0 ? sample.getMeasuredHeight() : dp(62);
         }
-        int targetH = memberRowHeightPx * MAX_VISIBLE_MEMBERS;
+        // 4 行完整高度 + 第 5 行露出一半（半行 peek）：既提示可滚动，也让底部始终有被裁一半的行
+        int targetH = memberRowHeightPx * MAX_VISIBLE_MEMBERS + memberRowHeightPx / 2;
         if (lp.height != targetH) {
             lp.height = targetH;
             memberList.setLayoutParams(lp);
@@ -1244,7 +1283,7 @@ public class MainActivity extends AppCompatActivity {
                 toast(getString(R.string.toast_join_pending));
                 startPendingJoinFlow(requestId);
             }
-        });
+        }, familyScanToken, cameraPermLauncher, scanLauncher);
     }
 
     // ---------------- 家庭邀请（切换家庭后邀请原成员 / 被邀请加入） ----------------
@@ -1949,6 +1988,12 @@ public class MainActivity extends AppCompatActivity {
         View v = getLayoutInflater().inflate(R.layout.dialog_family_code, null);
         TextView tvCode = v.findViewById(R.id.tvCode);
         tvCode.setText(prefs.familyCode());
+        // 家庭码下方显示二维码：家人可用「扫码加入」直接识别
+        ImageView ivQr = v.findViewById(R.id.ivQrCode);
+        Bitmap qr = QrCode.generate(prefs.familyCode(), dp(200));
+        if (qr != null) {
+            ivQr.setImageBitmap(qr);
+        }
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.dialog_code_title)
                 .setView(v)

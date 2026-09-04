@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ==================== 权限 ==================== -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -35,6 +36,9 @@
     <!-- 响铃：临时调整闹钟音量，确保静音/振动模式下也能听到 -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- 扫码加入：仅当用户点击「扫码」按钮时才请求（见 FamilySetupDialog） -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- 应用内更新：安装 APK -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -66,6 +70,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 二维码扫码界面（zxing-android-embedded 自带的 CaptureActivity；覆盖其默认横屏为竖屏以适配本应用） -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            tools:replace="android:screenOrientation" />
 
         <!-- 后台位置上报服务：前台服务，dataSync|location 类型 -->
         <service

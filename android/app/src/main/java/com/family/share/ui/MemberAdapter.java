@@ -41,20 +41,30 @@ public class MemberAdapter extends RecyclerView.Adapter<MemberAdapter.VH> {
     }
 
     /**
-     * 整体刷新成员列表（本机排最前）。用 DiffUtil 只对发生变化的行做局部刷新，
+     * 整体刷新成员列表（群主置顶，其次本机）。用 DiffUtil 只对发生变化的行做局部刷新，
      * 避免整表 notifyDataSetChanged 造成“绿点闪烁”；适合周期刷新（在线/头像/群主状态及时更新）。
      */
     public void update(List<Member> list, String myDeviceId) {
         this.myDeviceId = myDeviceId;
-        // 重新排序：本机排最前
+        // 重新排序：群主置顶，其次本机（我），再按输入顺序排其余成员
         final List<Member> newList = new ArrayList<>();
+        Member owner = null;
+        for (Member m : list) {
+            if (m.isOwner && !m.deviceId.equals(myDeviceId)) {
+                owner = m;
+                break;
+            }
+        }
+        if (owner != null) {
+            newList.add(owner);
+        }
         for (Member m : list) {
             if (m.deviceId.equals(myDeviceId)) {
                 newList.add(m);
             }
         }
         for (Member m : list) {
-            if (!m.deviceId.equals(myDeviceId)) {
+            if (!m.deviceId.equals(myDeviceId) && (owner == null || !m.deviceId.equals(owner.deviceId))) {
                 newList.add(m);
             }
         }

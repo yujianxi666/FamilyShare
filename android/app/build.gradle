@@ -61,4 +61,8 @@ dependencies {
     // 高德地图 SDK（Maven 中央仓库）
     // 注意：3dmap 9.x 已内置定位 SDK，勿再单独引入 com.amap.api:location，否则类重复
     implementation 'com.amap.api:3dmap:9.8.3'    // 3D 地图（含定位）
+
+    // 二维码：家庭码生成（core）+ 扫码（zxing-android-embedded，内含相机扫码界面）
+    implementation 'com.google.zxing:core:3.5.3'
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
 }

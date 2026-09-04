@@ -46,6 +46,13 @@
     <string name="btn_copy">复制家庭码</string>
     <string name="toast_code_copied">家庭码已复制，分享给家人即可加入</string>
     <string name="toast_no_family_code">尚未加入家庭，请先创建或加入</string>
+    <string name="qr_code_desc">家庭码二维码</string>
+
+    <!-- 扫码加入 -->
+    <string name="scan_join">扫码加入</string>
+    <string name="scan_prompt">请扫描家人分享的二维码</string>
+    <string name="toast_need_camera_permission">需要相机权限才能扫码加入</string>
+    <string name="toast_code_scanned">已识别，请确认家庭码后加入</string>
     <string name="dialog_switch_confirm_message">切换家庭后将不再显示原家庭成员的位置，确定切换？</string>
     <string name="dialog_switch_confirm_ok">确定切换</string>
 
