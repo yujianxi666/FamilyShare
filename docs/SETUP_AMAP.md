@@ -58,6 +58,19 @@ AMAP_KEY=你的32位Key
 - **定位失败**：确认已授予定位权限（含“始终允许”）；室内打开 WiFi/数据网络。
 - **控制台报错**：Logcat 过滤 `amap`，按错误码排查（如 `IO 异常` 多为网络，`INVALID_USER_SCODE` 为 Key 校验失败）。
 
+## 6. 集成轻量版地图SDK（本工程使用）
+
+本工程使用**高德「轻量版地图SDK」V1.3.2**（合包含 地图 1.3.2 + 搜索 9.7.4 + 定位 6.4.9）。
+它基于 WebView 渲染、**不含原生 `.so`**，因此安装包比 3D 地图 SDK 小很多；但它**不在 Maven 仓库**，需要手动集成：
+
+1. 下载：<https://a.amap.com/lbs/static/amap_3dmap_lite/Lite3DMap.zip>
+2. 解压后，把其中的 jar（形如 `Lite3DMap_1.3.2_AMapSearch_9.7.4_AMapLocation_6.4.9_*.jar`）复制到 `android/app/libs/`
+3. `app/build.gradle` 已改为 `implementation fileTree(dir: 'libs', include: ['*.jar'])`，无需再引入 `com.amap.api:3dmap`
+
+包名与 3D 地图 SDK 一致（`com.amap.api.maps` / `com.amap.api.location`），**Key 的申请与绑定方式不变**（仍绑定包名 + SHA1，勾选地图与定位服务）。
+
+> 代码差异：轻量版地图对象是**异步就绪**的（`MapView.getMapAsyn(OnMapReadyListener)`，没有 `getMap()`），且其 `UiSettings` 只有手势开关（无指南针/缩放按钮/默认刻度尺）；本工程刻度尺为自绘，`App` 中也不再调用地图的 `updatePrivacyShow/Agree`（轻量版无此接口）。
+
 ## 补充
 
 - 高德坐标为国测局 GCJ-02 坐标系，本工程定位 SDK 默认输出 GCJ-02，与高德地图展示坐标系一致，无需转换。

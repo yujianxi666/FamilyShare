@@ -28,16 +28,16 @@ public class App extends Application {
         applySavedServer();
 
         // ===== 高德 SDK 隐私合规（必须在调用任何高德接口之前）=====
-        // 高德地图/定位 SDK 要求：使用前必须先调用 updatePrivacyShow + updatePrivacyAgree 且为 true，
-        // 否则 SDK 拒绝工作（地图空白/定位失败，errorCode 555570）。
+        // 定位 SDK 要求：使用前必须先调用 updatePrivacyShow + updatePrivacyAgree 且为 true，否则拒绝工作。
+        // 注意：轻量版地图SDK 的 MapsInitializer 没有 updatePrivacyShow/updatePrivacyAgree 接口
+        // （见官方文档「Android 轻量版地图SDK · 显示地图」，其地图隐私由定位 SDK 的声明覆盖），
+        // 因此这里只声明定位 SDK 的隐私合规。
         // 本应用为家庭自用：位置数据仅上传至用户自建的家庭服务器，仅家庭成员可见；
         // 首次启动时主界面会向用户展示隐私说明（见 MainActivity.maybeShowPrivacyDialog）。
-        MapsInitializer.updatePrivacyShow(this, true, true);
-        MapsInitializer.updatePrivacyAgree(this, true);
         AMapLocationClient.updatePrivacyShow(this, true, true);
         AMapLocationClient.updatePrivacyAgree(this, true);
 
-        // 高德 3D 地图 SDK 初始化（Key 在 AndroidManifest 的 meta-data 中配置）
+        // 高德轻量版地图 SDK 初始化（Key 在 AndroidManifest 的 meta-data 中配置）
         try {
             MapsInitializer.initialize(this);
         } catch (RemoteException e) {

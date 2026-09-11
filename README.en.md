@@ -6,7 +6,7 @@
 
 A **private family location sharing** app: family members join the same family by entering a 6-digit code (**owner approval required**), then see each other's live location on a map. It supports low-power background reporting, auto-start on boot, in-app updates, "ring my phone", tracks, blacklist, and a message center. Coordinates use AMap GCJ‑02.
 
-- 📱 Client: `android/` (native Android, Java, AMap 3D Map 9.8.3 + OkHttp)
+- 📱 Client: `android/` (native Android, Java, AMap Lite Map SDK 1.3.2 + OkHttp)
 - ☕ Server: `server/` (Java / Spring Boot 3.3.4, REST + WebSocket, Redis persistence)
 - 📄 Docs: `docs/` (protocol, AMap key guide, icon)
 - 🌐 Website: [https://fms.uiero.com](https://fms.uiero.com)
@@ -21,7 +21,7 @@ A **private family location sharing** app: family members join the same family b
 | --- | --- |
 | Live location sharing | Request to join with a 6-digit code (owner approval) → color pins on the map; online/offline status updates live; member-list avatar shares the pin color |
 | Low-power background + boot | Foreground service (`dataSync`) + `AlarmManager.setAndAllowWhileIdle` + `BOOT_COMPLETED` relaunch + 5-minute watchdog |
-| AMap map | 3D Map SDK 9.8.3 (with built-in location SDK), GCJ-02 coordinates, compass + scale bar |
+| AMap map | Lite Map SDK 1.3.2 (WebView-rendered, no native `.so`, bundles location 6.4.9), GCJ-02, self-drawn scale bar |
 | Real-time refresh | Someone taps "Refresh" → server sends `report-now` over WebSocket → target locates immediately and reports → everyone updates in seconds |
 | Refresh on open | Every time the app opens (including returning from background) in a family with >1 member, it auto-requests a fresh location from everyone (bottom toast, no popup) |
 | Member detail | Battery, network (incl. WiFi name), coarse address, accuracy, one-tap navigation, ring |
@@ -42,7 +42,7 @@ A **private family location sharing** app: family members join the same family b
 | Layer | Tech |
 | --- | --- |
 | Client | Java, Gradle / AGP 8.5.2 / Gradle 8.7 / JDK 17+, minSdk 23 / targetSdk 34 |
-| Map / location | `com.amap.api:3dmap:9.8.3` (built-in location; do not add the separate location package) |
+| Map / location | AMap **Lite Map SDK 1.3.2** (bundle: map 1.3.2 + search 9.7.4 + location 6.4.9) — not on Maven: download [Lite3DMap.zip](https://a.amap.com/lbs/static/amap_3dmap_lite/Lite3DMap.zip) and put its jar in `android/app/libs/` |
 | Networking | OkHttp 4.12.0 (REST + WebSocket) |
 | UI | Material 1.12.0 / AppCompat / RecyclerView |
 | Server | Spring Boot 3.3.4 (starter-web + starter-websocket), Java 17, Maven, embedded Tomcat, port 3000 |
@@ -82,6 +82,11 @@ curl http://127.0.0.1:3000/api/health   # -> {"status":"ok",...}
 Change port: `java -jar target/family-share-server.jar --server.port=3001`.
 
 ### 2. Client
+
+> **Prerequisite: add the AMap Lite Map SDK (this repo does not ship that jar)**
+> This project uses the AMap **Lite Map SDK V1.3.2**, which is **not on Maven** and is **not redistributed in this repo** for licensing reasons (`android/app/libs/*.jar` is git-ignored).
+> Download <https://a.amap.com/lbs/static/amap_3dmap_lite/Lite3DMap.zip>, unzip, and put its jar (e.g. `Lite3DMap_1.3.2_AMapSearch_9.7.4_AMapLocation_6.4.9_*.jar`) into `android/app/libs/` (create the folder if needed).
+> See section 6 of `docs/SETUP_AMAP.md`.
 
 1. Request an AMap Android Key per `docs/SETUP_AMAP.md` (bind package `com.family.share` + your signing SHA1, enable **Maps + Location**).
 2. Edit `android/gradle.properties`:
@@ -163,6 +168,11 @@ Released under the [MIT License](LICENSE).
 
 ## 📋 Changelog
 
+- 2026.09.10 For licensing reasons the AMap Lite Map SDK jar is no longer distributed with this repo (`android/app/libs/*.jar` / `*.aar` are now git-ignored); the client build section documents the prerequisite (download Lite3DMap.zip yourself and put its jar into `android/app/libs/`). ----- Committed 2026.09.10
+- 2026.09.10 Switched the map to AMap's Lite Map SDK V1.3.2 (WebView-rendered, no native `.so`, bundles location 6.4.9): dropped the Maven `3dmap` dependency and vendored the SDK jar in `app/libs/`; the map object is now async-ready (`getMapAsyn` — map ops are skipped until ready, then markers/tracks are drawn and the camera fits); removed the compass / zoom-controls / scale-controls and map privacy calls the lite SDK does not support. The release APK dropped from ~17 MB to ~3.3 MB. ----- Committed 2026.09.10
+- 2026.09.10 Reduced the app size: the release build now enables R8 minification + resource shrinking and packages only ARM real-device ABIs (dropping the armeabi / x86_64 native libs). The release APK went from ~28 MB+ to ~17 MB. AMap and ZXing keep rules were added so minification cannot break them at runtime. Note: to install a release build on an x86 emulator, relax the ABI filter yourself. ----- Committed 2026.09.10
+- 2026.09.10 Improved background keep-alive: added a system-managed JobScheduler watchdog (15-min period, persisted across reboots, complementing the existing alarm + foreground service), plus a gentle reminder every 3 days when the app is not whitelisted for battery optimization / auto-start. The app's About dialog now links the GitHub repo; the website download button now points to GitHub instead of Huawei AppGallery, and the privacy / rights pages gained the GitHub link. The server gained a read-only status dashboard (/dashboard/&lt;token&gt;: total users, online devices, families, CPU, memory, in/out bandwidth and load curves) — aggregate-only data, no private information, and no way to modify anything. ----- Committed 2026.09.10
+- 2026.08.30 The detail page now keeps the scale bar visible; the About dialog shows the app filing number (鄂ICP备15020522号-2A); the join-family page's "Scan to join" is now a prominent button and a scanned code joins directly (no extra confirm tap). ----- Committed 2026.08.30
 - 2026.08.30 Added QR codes: the family-code dialog now shows a QR code under the number; the join-family dialog gained a grey "Scan to join" link below the two inputs (camera permission is only requested when it is tapped); the member list now sorts the owner to the top, and when there are more than 4 members the 5th is half-visible as a scroll hint. ----- Committed 2026.08.30
 - 2026.08.30 Refined when the list collapses on pull-down: it only collapses when the list is already at the top and you pull down again. The pull that scrolls the list up to the top does not collapse (you must reach the top, then pull down once more), and swiping up can no longer collapse the panel. ----- Committed 2026.08.30
 - 2026.08.30 Refined the refresh & panel interaction: a top toast now says "xxx's location updated" when a family member's position updates (rate-limited to avoid a burst of toasts); swiping up while expanded now only scrolls the member list and no longer collapses the panel; the grey handle row expands on swipe-up from anywhere on it; the member list shows at most 4 rows and scrolls for more, and pulling down after reaching the top collapses the panel. ----- Committed 2026.08.30

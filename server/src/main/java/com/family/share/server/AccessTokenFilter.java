@@ -25,14 +25,16 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
         String path = req.getRequestURI();
-        // 公开（无需 API 口令）：官网首页 / 健康检查 / APK 下载 / Bug 管理页（后者自身带路径口令）
+        // 公开（无需 API 口令）：官网首页 / 健康检查 / APK 下载 / Bug 管理页 / 只读状态看板
+        // （后两者自身带路径口令；看板页面只会读取聚合统计，不含隐私信息）
         // 隐私政策 / 隐私权利页必须公开可访问，供应用市场审核与客户端内展示
         if (path.equals("/") || path.equals("/index.html")
                 || path.equals("/privacy.html")
                 || path.equals("/rights.html")
                 || path.equals("/api/health")
                 || path.equals("/downloads") || path.startsWith("/downloads/")
-                || path.equals("/bugadmin") || path.startsWith("/bugadmin/")) {
+                || path.equals("/bugadmin") || path.startsWith("/bugadmin/")
+                || path.equals("/dashboard") || path.startsWith("/dashboard/")) {
             chain.doFilter(req, res);
             return;
         }

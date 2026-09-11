@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class WsHandler extends TextWebSocketHandler {
 
     private final Store store;
+    private final TrafficCounter traffic;
     private final ObjectMapper mapper = new ObjectMapper();
 
     /** deviceId -> session */
@@ -32,8 +33,9 @@ public class WsHandler extends TextWebSocketHandler {
     /** sessionId -> deviceId（连接关闭时反查） */
     private final Map<String, String> sessionToDevice = new ConcurrentHashMap<>();
 
-    public WsHandler(Store store) {
+    public WsHandler(Store store, TrafficCounter traffic) {
         this.store = store;
+        this.traffic = traffic;
     }
 
     @Override
@@ -91,12 +93,29 @@ public class WsHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        // 客户端当前无需上行消息
+        // 客户端当前无需上行消息；仅统计字节数用于带宽看板
+        if (message != null && message.getPayload() != null) {
+            traffic.addIn(message.getPayload().length());
+        }
     }
 
     public boolean isOnline(String deviceId) {
         WebSocketSession s = sessions.get(deviceId);
         return s != null && s.isOpen();
+    }
+
+    /**
+     * 当前在线（WS 已连接）设备数。
+     * 仅返回一个数字供只读统计看板使用，不暴露任何 deviceId 等信息。
+     */
+    public int onlineCount() {
+        int n = 0;
+        for (WebSocketSession s : sessions.values()) {
+            if (s != null && s.isOpen()) {
+                n++;
+            }
+        }
+        return n;
     }
 
     /** 通知目标设备立即上报一次位置，返回是否已送达 */
@@ -182,6 +201,7 @@ public class WsHandler extends TextWebSocketHandler {
             synchronized (session) {
                 if (session.isOpen()) {
                     session.sendMessage(new TextMessage(text));
+                    traffic.addOut(text.length()); // 仅统计字节数，用于带宽看板
                 }
             }
         } catch (Exception ignored) {

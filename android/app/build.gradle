@@ -27,8 +27,15 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            // 开启混淆 + 资源压缩，减小安装包体积（原为 false）
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // ABI 保险：当前所有依赖都没有原生库（高德轻量版地图为 WebView 实现、ZXing/OkHttp 均为纯 Java），
+            // 打包结果里已无 lib/*.so；此处保留过滤，若将来引入原生库则只打包 ARM 真机 ABI（去掉仅模拟器用的 x86/x86_64）。
+            ndk {
+                abiFilters 'armeabi-v7a', 'arm64-v8a'
+            }
         }
     }
 
@@ -58,9 +65,11 @@ dependencies {
     // 网络
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
-    // 高德地图 SDK（Maven 中央仓库）
-    // 注意：3dmap 9.x 已内置定位 SDK，勿再单独引入 com.amap.api:location，否则类重复
-    implementation 'com.amap.api:3dmap:9.8.3'    // 3D 地图（含定位）
+    // 高德「轻量版地图SDK」V1.3.2（合包：地图 1.3.2 + 搜索 9.7.4 + 定位 6.4.9）
+    // 该 SDK 不在 Maven 仓库，需手动下载 https://a.amap.com/lbs/static/amap_3dmap_lite/Lite3DMap.zip
+    // 并把其中的 jar 放到 app/libs/。它基于 WebView 渲染，**不含原生 .so**，APK 体积远小于 3dmap。
+    // 包名与 3D 地图 SDK 一致（com.amap.api.maps / com.amap.api.location），上层代码基本无需改动。
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
 
     // 二维码：家庭码生成（core）+ 扫码（zxing-android-embedded，内含相机扫码界面）
     implementation 'com.google.zxing:core:3.5.3'

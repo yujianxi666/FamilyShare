@@ -117,6 +117,8 @@ public class MainActivity extends AppCompatActivity {
 
     private MapView mapView;
     private AMap aMap;
+    /** 地图是否已就绪：轻量版地图SDK 为异步就绪（getMapAsyn），未就绪前跳过所有地图操作 */
+    private boolean mapReady;
     private RecyclerView memberList;
     private MemberAdapter adapter;
     private TextView tvStatus;
@@ -178,12 +180,18 @@ public class MainActivity extends AppCompatActivity {
     // ---- 二维码：家庭码展示（生成）+ 加入家庭页「扫码加入」（权限仅点击时申请） ----
     /** 扫码共享句柄：joinCode=加入对话框的家庭码输入框，扫码成功后把识别到的码填进去 */
     private final FamilySetupDialog.ScanToken familyScanToken = new FamilySetupDialog.ScanToken();
-    /** 扫码结果：识别到二维码后把家庭码写入加入对话框的输入框 */
+    /** 扫码结果：识别到二维码后交给加入对话框（填入家庭码并直接确认加入） */
     private final ActivityResultLauncher<ScanOptions> scanLauncher = registerForActivityResult(
             new ScanContract(), result -> {
                 String code = result.getContents();
-                if (code != null && familyScanToken.joinCode != null) {
-                    familyScanToken.joinCode.setText(code.trim());
+                if (code == null || code.trim().isEmpty()) {
+                    return;
+                }
+                code = code.trim();
+                if (familyScanToken.onScanned != null) {
+                    familyScanToken.onScanned.accept(code);
+                } else if (familyScanToken.joinCode != null) {
+                    familyScanToken.joinCode.setText(code);
                     toast(getString(R.string.toast_code_scanned));
                 }
             });
@@ -377,14 +385,26 @@ public class MainActivity extends AppCompatActivity {
 
         myDeviceId = Prefs.get(this).deviceId();
 
-        // 地图
+        // 地图（轻量版地图SDK：基于 WebView，地图对象**异步**就绪，没有 getMap()）
         mapView = findViewById(R.id.mapView);
         mapView.onCreate(savedInstanceState);
-        aMap = mapView.getMap();
-        aMap.setMapType(AMap.MAP_TYPE_NORMAL);
-        aMap.getUiSettings().setCompassEnabled(true);   // 指南针
-        aMap.getUiSettings().setZoomControlsEnabled(false); // 隐藏默认缩放按钮，保留双指缩放
-        initScaleBar(); // 自绘刻度尺（默认刻度尺会被底部面板遮挡）
+        mapView.getMapAsyn(map -> {
+            aMap = map;
+            mapReady = true;
+            aMap.setMapType(AMap.MAP_TYPE_NORMAL);
+            // 注意：轻量版地图SDK 的 UiSettings 只有手势开关，没有指南针/缩放按钮/默认刻度尺控制，
+            // 因此这里不再调用 setCompassEnabled/setZoomControlsEnabled；刻度尺由本应用自绘（initScaleBar）。
+            initScaleBar(); // 自绘刻度尺（默认刻度尺会被底部面板遮挡）
+            // 地图就绪后，把「就绪前」已经拿到的成员位置/轨迹补画上去，并定位相机
+            for (Member m : members.values()) {
+                updateMarker(m);
+            }
+            updateTrackLines(new ArrayList<>(members.values()));
+            updateScaleBarPosition();
+            if (!members.isEmpty()) {
+                fitCameraToMembers();
+            }
+        });
 
         // 家人列表
         memberList = findViewById(R.id.memberList);
@@ -545,6 +565,8 @@ public class MainActivity extends AppCompatActivity {
         }
         // 从系统设置跳转返回后，刷新权限对话框内的状态文字
         refreshPermissionStatus();
+        // 保活提醒：未加入电池优化/自启动白名单时，每隔几天温和提醒一次
+        maybeRemindKeepAlive();
         // 周期探测服务器连通性，避免连接状态卡在“连接中”
         startHealthPolling();
         // 周期刷新成员列表（保底，每 30 秒一次）
@@ -608,6 +630,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateMarker(Member m) {
+        if (!mapReady || aMap == null) {
+            return; // 地图未就绪（轻量版地图异步就绪）：就绪后由 getMapAsyn 回调统一补画
+        }
         if (!m.hasLocation) {
             removeAccuracyCircle(m.deviceId);
             return;
@@ -742,6 +767,9 @@ public class MainActivity extends AppCompatActivity {
      * 半透明绿色填充，边缘 75% 不透明深绿色描边；角标保留在圆心。
      */
     private void updateAccuracyCircle(Member m) {
+        if (!mapReady || aMap == null) {
+            return;
+        }
         double radius = m.accuracy > 0 ? m.accuracy : 0;
         if (radius <= 0 || !m.hasLocation) {
             removeAccuracyCircle(m.deviceId);
@@ -858,6 +886,9 @@ public class MainActivity extends AppCompatActivity {
 
     /** 绘制/更新成员的轨迹连线（带指向箭头） */
     private void updateTrackLines(List<Member> list) {
+        if (!mapReady || aMap == null) {
+            return;
+        }
         Set<String> keep = new HashSet<>();
         for (Member m : list) {
             if (m.track && m.trajectory.size() >= 2) {
@@ -903,6 +934,9 @@ public class MainActivity extends AppCompatActivity {
 
     /** 添加/更新某成员轨迹的绿色起点标记（单独的一个绿点） */
     private void updateTrackStart(Member m) {
+        if (!mapReady || aMap == null) {
+            return;
+        }
         if (m.trajectory.isEmpty()) {
             removeTrackStart(m.deviceId);
             return;
@@ -1021,6 +1055,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void fitCameraToMembers() {
+        if (!mapReady || aMap == null) {
+            return;
+        }
         LatLngBounds.Builder builder = LatLngBounds.builder();
         boolean any = false;
         for (Member m : members.values()) {
@@ -1039,6 +1076,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void moveCamera(double lat, double lng) {
+        if (!mapReady || aMap == null) {
+            return;
+        }
         // 18 级缩放：定位到人/自己时更放大，便于看清位置
         aMap.animateCamera(CameraUpdateFactory
                 .newLatLngZoom(new LatLng(lat, lng), 18f));
@@ -2327,12 +2367,44 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         prefs.batteryPrompted(true);
+        // 首次引导也算一次提醒：避免刚引导完又被周期提醒重复打扰
+        prefs.keepAlivePromptAt(System.currentTimeMillis());
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
             // 主动弹出系统「忽略电池优化」请求对话框（而非仅展示权限设置大对话框）
             requestIgnoreBattery();
         }
         firstRunStepDone();
+    }
+
+    /**
+     * 保活提醒：若本应用不在电池优化白名单，每隔 3 天温和提醒一次去开启「自启动 + 忽略电池优化」。
+     * （微信级保活依赖厂商系统级白名单，普通应用只能引导用户手动加入省电白名单，
+     *   见 AppConfig 的看门狗/闹钟/JobScheduler 多路兜底。）
+     */
+    private void maybeRemindKeepAlive() {
+        if (Build.VERSION.SDK_INT < 23) {
+            return;
+        }
+        Prefs prefs = Prefs.get(this);
+        if (prefs.familyId().isEmpty()) {
+            return; // 尚未加入家庭，无需保活
+        }
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) {
+            return; // 已在白名单，不打扰
+        }
+        long now = System.currentTimeMillis();
+        if (now - prefs.keepAlivePromptAt() < 3L * 24 * 60 * 60 * 1000) {
+            return; // 3 天内已提醒过
+        }
+        prefs.keepAlivePromptAt(now);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.keepalive_title)
+                .setMessage(R.string.keepalive_message)
+                .setPositiveButton(R.string.keepalive_go, (d, w) -> showPermissionsDialog())
+                .setNegativeButton(R.string.keepalive_later, null)
+                .show();
     }
 
     /** 权限设置：集中展示并跳转各项权限（定位/通知/电池优化/自启动/安装未知应用） */
@@ -2581,6 +2653,11 @@ public class MainActivity extends AppCompatActivity {
         ll.setPadding(dp(20), dp(12), dp(20), dp(6));
         ll.addView(aboutItem(getString(R.string.about_developer),
                 getString(R.string.developer_name), null));
+        ll.addView(aboutItem(getString(R.string.about_icp),
+                getString(R.string.icp_number), null));
+        ll.addView(aboutItem(getString(R.string.about_github),
+                "github.com/yujianxi666/FamilyShare",
+                "https://github.com/yujianxi666/FamilyShare"));
         ll.addView(aboutItem(getString(R.string.menu_privacy),
                 AppConfig.SERVER_URL + "/privacy.html",
                 AppConfig.SERVER_URL + "/privacy.html"));
@@ -3090,8 +3167,7 @@ public class MainActivity extends AppCompatActivity {
         scaleLine = findViewById(R.id.scaleLine);
         // |___| 样式深色刻度线（地图底图固定为浅色，深色线保证清晰）
         scaleLine.setBackground(new ScaleLineDrawable(0xFF1A1A2E, dp(2), dp(5)));
-        // 关闭 SDK 默认刻度尺，改用自绘
-        aMap.getUiSettings().setScaleControlsEnabled(false);
+        // 注：轻量版地图SDK 没有默认刻度尺（UiSettings 无 setScaleControlsEnabled），刻度尺全部由本应用自绘
         aMap.setOnCameraChangeListener(new AMap.OnCameraChangeListener() {
             @Override
             public void onCameraChange(CameraPosition cameraPosition) {
@@ -3105,20 +3181,25 @@ public class MainActivity extends AppCompatActivity {
         mapView.post(this::updateScaleBarPosition);
     }
 
-    /** 刻度尺位置：面板展开时位于面板上方，收起时下移到头部上方，详情页隐藏 */
+    /** 刻度尺位置：面板展开时位于面板上方，收起时下移到头部上方；详情页也保持显示（位于详情面板上方） */
     private void updateScaleBarPosition() {
         if (scaleBar == null) {
             return;
         }
-        // 仅当详情完整展开时隐藏刻度尺；详情被灰色小横条收起后按面板头部高度定位
-        if (detailOpen && !panelCollapsed) {
-            scaleBar.setVisibility(View.GONE);
-            return;
-        }
         scaleBar.setVisibility(View.VISIBLE);
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) scaleBar.getLayoutParams();
-        int panelH = panelCollapsed ? panelHeaderHeight() : panelFullHeight();
-        lp.bottomMargin = panelH + dp(26);
+        int panelH;
+        if (detailOpen && !panelCollapsed) {
+            // 详情页展开：面板高度 = 头部 + 详情内容高度
+            panelH = panelHeaderHeight() + (detailArea != null ? detailArea.getHeight() : 0);
+        } else if (panelCollapsed) {
+            panelH = panelHeaderHeight();
+        } else {
+            panelH = panelFullHeight();
+        }
+        // 详情内容很高时把刻度尺顶出屏幕，这里限制其最高位置
+        int maxBottom = getResources().getDisplayMetrics().heightPixels - dp(140);
+        lp.bottomMargin = Math.min(panelH + dp(26), maxBottom);
         scaleBar.setLayoutParams(lp);
         updateScaleBar();
     }
@@ -3304,10 +3385,8 @@ public class MainActivity extends AppCompatActivity {
         dOwnerArea.setVisibility(View.VISIBLE);
         // 加粗高亮该成员的轨迹线
         highlightTrack(m.deviceId);
-        // 详情页打开时隐藏刻度尺（详情内容可能很高，避免遮挡）
-        if (scaleBar != null) {
-            scaleBar.setVisibility(View.GONE);
-        }
+        // 详情页也保留刻度尺：详情内容布局完成后重新定位到详情面板上方
+        detailArea.post(this::updateScaleBarPosition);
     }
 
     /** 关闭详情，右滑退出回到成员列表视图 */

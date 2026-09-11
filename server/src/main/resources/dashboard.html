@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>家庭共享 · 后端状态看板（只读）</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#0f1420;color:#e6ebf5;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:24px 18px 60px}
+  h1{font-size:20px;margin:0 0 6px}
+  .sub{color:#8b97ad;font-size:13px;margin-bottom:16px}
+  .ro{display:inline-block;background:#16324a;color:#7fd1ff;border:1px solid #24506f;
+      border-radius:999px;padding:2px 10px;font-size:12px;margin-left:8px;vertical-align:middle}
+  .notice{background:#141d2c;border:1px solid #22314a;border-radius:12px;padding:12px 14px;
+          color:#9fb0c9;font-size:12.5px;line-height:1.7;margin-bottom:18px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:22px}
+  .card{background:#141d2c;border:1px solid #22314a;border-radius:14px;padding:14px 16px}
+  .card .k{color:#8b97ad;font-size:12px;margin-bottom:8px}
+  .card .v{font-size:22px;font-weight:700;letter-spacing:.3px}
+  .card .v small{font-size:12px;font-weight:500;color:#8b97ad;margin-left:3px}
+  .chart{background:#141d2c;border:1px solid #22314a;border-radius:14px;padding:14px 16px;margin-bottom:14px}
+  .chart .t{font-size:13px;color:#b9c6db;margin-bottom:8px;display:flex;justify-content:space-between}
+  .chart .t .lg{color:#8b97ad;font-size:11.5px}
+  canvas{width:100%;height:150px;display:block}
+  .foot{color:#6f7d94;font-size:12px;margin-top:20px;line-height:1.8}
+  a{color:#7fd1ff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>家庭共享 · 后端状态看板<span class="ro">只读</span></h1>
+  <div class="sub">聚合运行指标 · 每 5 秒自动刷新 · 最近约 10 分钟曲线</div>
+
+  <div class="notice">
+    <b>只读看板：</b>本页仅展示服务器的<b>聚合统计数字</b>（用户数、在线数、CPU、内存、带宽、运行时长），
+    <b>不包含任何个人信息</b>（无昵称、无设备号、无位置、无家庭码），也<b>不提供任何修改服务器的功能与权限</b>。
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="chart">
+    <div class="t"><span>CPU 占用（%）</span><span class="lg">蓝=系统　绿=本进程</span></div>
+    <canvas id="cCpu"></canvas>
+  </div>
+
+  <div class="chart">
+    <div class="t"><span>在线设备数</span><span class="lg">WS 已连接</span></div>
+    <canvas id="cOnline"></canvas>
+  </div>
+
+  <div class="chart">
+    <div class="t"><span>带宽占用</span><span class="lg">蓝=入站（接收）　橙=出站（发送）（KB/s）</span></div>
+    <canvas id="cNet"></canvas>
+  </div>
+
+  <div class="foot" id="foot">加载中…</div>
+</div>
+
+<script>
+  var TOKEN = "__API_TOKEN__";
+
+  function fmtBytes(bps) {
+    if (bps >= 1048576) return (bps / 1048576).toFixed(2) + " MB/s";
+    if (bps >= 1024) return (bps / 1024).toFixed(1) + " KB/s";
+    return Math.round(bps) + " B/s";
+  }
+  function fmtUptime(sec) {
+    var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    if (d > 0) return d + " 天 " + h + " 小时";
+    if (h > 0) return h + " 小时 " + m + " 分";
+    return m + " 分";
+  }
+  function get(url, cb) {
+    var x = new XMLHttpRequest();
+    x.open("GET", url, true);
+    x.setRequestHeader("X-Api-Token", TOKEN);
+    x.onreadystatechange = function () {
+      if (x.readyState === 4 && x.status === 200) {
+        try { cb(JSON.parse(x.responseText)); } catch (e) {}
+      }
+    };
+    x.send();
+  }
+
+  function renderCards(s) {
+    var items = [
+      ["总用户数", s.totalUsers, "台设备"],
+      ["在线设备", s.onlineUsers, "台"],
+      ["家庭数", s.familyCount, "个"],
+      ["系统 CPU", Number(s.cpu || 0).toFixed(1), "%"],
+      ["进程 CPU", Number(s.cpuProc || 0).toFixed(1), "%"],
+      ["堆内存", s.memUsedMb + " / " + s.memMaxMb, "MB"],
+      ["入站流量", fmtBytes(s.inBps || 0), ""],
+      ["出站流量", fmtBytes(s.outBps || 0), ""],
+      ["运行时长", fmtUptime(s.uptimeSec || 0), ""]
+    ];
+    document.getElementById("cards").innerHTML = items.map(function (it) {
+      return '<div class="card"><div class="k">' + it[0] + '</div><div class="v">' +
+             it[1] + '<small>' + it[2] + '</small></div></div>';
+    }).join("");
+  }
+
+  // 重置画布尺寸（会清空）并画网格
+  function prepare(canvas) {
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = Math.max(1, Math.round(w * dpr));
+    canvas.height = Math.max(1, Math.round(h * dpr));
+    var g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = "rgba(255,255,255,0.06)";
+    g.lineWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+      var y = (h - 1) * i / 4;
+      g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+    }
+  }
+
+  // 在同一画布上追加一条曲线（不重置画布）
+  function plot(canvas, values, color, maxV, fill) {
+    if (!values || values.length < 2) return;
+    var g = canvas.getContext("2d");
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    var max = maxV > 0 ? maxV : Math.max.apply(null, values);
+    if (!(max > 0)) max = 1;
+    var n = values.length;
+    var stepX = w / Math.max(1, n - 1);
+    g.beginPath();
+    for (var j = 0; j < n; j++) {
+      var v = Math.max(0, Math.min(max, values[j]));
+      var px = j * stepX;
+      var py = h - (v / max) * (h - 4) - 2;
+      if (j === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokeStyle = color;
+    g.lineWidth = 2;
+    g.lineJoin = "round";
+    g.stroke();
+    if (fill) {
+      g.lineTo(w, h);
+      g.lineTo(0, h);
+      g.closePath();
+      g.fillStyle = color.replace("rgb(", "rgba(").replace(")", ",0.12)");
+      g.fill();
+    }
+  }
+
+  function renderCharts(points) {
+    if (!points || points.length === 0) return;
+    var cpu = points.map(function (p) { return Number(p.cpu) || 0; });
+    var cpuProc = points.map(function (p) { return Number(p.cpuProc) || 0; });
+    var online = points.map(function (p) { return Number(p.online) || 0; });
+    var inRate = points.map(function (p) { return (Number(p.inBps) || 0) / 1024; });
+    var outRate = points.map(function (p) { return (Number(p.outBps) || 0) / 1024; });
+
+    var c1 = document.getElementById("cCpu");
+    prepare(c1);
+    plot(c1, cpu, "rgb(88,166,255)", 100, true);
+    plot(c1, cpuProc, "rgb(63,185,80)", 100, false);
+
+    var c2 = document.getElementById("cOnline");
+    prepare(c2);
+    plot(c2, online, "rgb(88,166,255)", 0, true);
+
+    var netMax = Math.max(1, Math.max.apply(null, inRate.concat(outRate)));
+    var c3 = document.getElementById("cNet");
+    prepare(c3);
+    plot(c3, inRate, "rgb(88,166,255)", netMax, true);
+    plot(c3, outRate, "rgb(255,166,87)", netMax, false);
+  }
+
+  function tick() {
+    get("/api/stats/summary", function (s) {
+      renderCards(s);
+      document.getElementById("foot").textContent =
+        "最近更新：" + new Date().toLocaleTimeString() +
+        "　·　数据为服务端聚合统计，仅供观察，不含任何个人信息。";
+    });
+    get("/api/stats/series", function (d) {
+      renderCharts(d.points || []);
+    });
+  }
+
+  tick();
+  setInterval(tick, 5000);
+</script>
+</body>
+</html>

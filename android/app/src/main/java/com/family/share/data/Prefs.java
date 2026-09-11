@@ -127,6 +127,15 @@ public class Prefs {
         sp.edit().putBoolean("battery_prompted", v).apply();
     }
 
+    /** 上次提醒「开启自启动 / 忽略电池优化」的时间戳：每隔几天温和提醒一次，避免打扰 */
+    public long keepAlivePromptAt() {
+        return sp.getLong("keep_alive_prompt_at", 0);
+    }
+
+    public void keepAlivePromptAt(long v) {
+        sp.edit().putLong("keep_alive_prompt_at", v).apply();
+    }
+
     /** 隐私说明是否已展示过（首次启动展示一次） */
     public boolean privacyPrompted() {
         return sp.getBoolean("privacy_prompted", false);

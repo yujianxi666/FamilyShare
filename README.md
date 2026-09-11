@@ -6,7 +6,7 @@
 
 一个**家庭私享的位置共享 App**：家人用 6 位家庭码申请加入同一家庭（**需群主同意**），在地图上实时看到彼此位置；支持低功耗后台上报、开机自启、应用内更新、响铃、轨迹、黑名单、消息中心等。坐标使用高德坐标系（GCJ-02）。
 
-- 📱 客户端：`android/`（原生 Android，Java，高德 3D 地图 9.8.3 + OkHttp）
+- 📱 客户端：`android/`（原生 Android，Java，高德轻量版地图SDK 1.3.2 + OkHttp）
 - ☕ 服务端：`server/`（Java / Spring Boot 3.3.4，REST + WebSocket，Redis 持久化）
 - 📄 文档：`docs/`（协议、高德 Key 申请、图标）
 - 🌐 官网：[https://fms.uiero.com](https://fms.uiero.com)
@@ -21,7 +21,7 @@
 | --- | --- |
 | 实时位置共享 | 6 位家庭码申请加入（需群主同意）→ 地图彩色图钉实时展示；上下线状态实时变化；成员列表头像与地图标点同色 |
 | 低功耗后台 + 开机自启 | 前台服务（`dataSync`）+ `AlarmManager.setAndAllowWhileIdle` 自调度 + `BOOT_COMPLETED` 自动拉起 + 5 分钟看门狗 |
-| 高德地图 | 3D 地图 SDK 9.8.3（内置定位 SDK），GCJ-02 坐标，指南针 + 刻度尺 |
+| 高德地图 | 轻量版地图SDK V1.3.2（WebView 渲染、无原生 .so，含定位 6.4.9），GCJ-02 坐标，自绘刻度尺 |
 | 实时刷新 | 家人点「刷新」→ 服务端 WebSocket 下发 `report-now` → 目标立即定位上报 → 全家人秒级更新 |
 | 打开自动刷新 | 每次打开 App（含从后台返回）且在多人家庭时，自动向全员请求一次实时位置并底部提示 |
 | 成员详情 | 电量、网络（含 WiFi 名称）、粗略地址、精度、一键导航、响铃 |
@@ -42,7 +42,7 @@
 | 层 | 技术 |
 | --- | --- |
 | 客户端 | Java、Gradle / AGP 8.5.2 / Gradle 8.7 / JDK 17+，minSdk 23 / targetSdk 34 |
-| 地图/定位 | `com.amap.api:3dmap:9.8.3`（内置定位，勿再单独引入 location 包） |
+| 地图/定位 | 高德**轻量版地图SDK V1.3.2**（合包含搜索 9.7.4 + 定位 6.4.9）：不在 Maven，需下载 [Lite3DMap.zip](https://a.amap.com/lbs/static/amap_3dmap_lite/Lite3DMap.zip) 后把 jar 放入 `android/app/libs/` |
 | 网络 | OkHttp 4.12.0（REST + WebSocket） |
 | UI | Material 1.12.0 / AppCompat / RecyclerView |
 | 服务端 | Spring Boot 3.3.4（starter-web + starter-websocket），Java 17，Maven，内嵌 Tomcat，端口 3000 |
@@ -81,6 +81,11 @@ curl http://127.0.0.1:3000/api/health   # -> {"status":"ok",...}
 - 改端口：`java -jar target/family-share-server.jar --server.port=3001`。
 
 ### 2. 客户端
+
+> **先决条件：放入高德轻量版地图SDK（本仓库不分发该 jar）**
+> 本工程使用高德**轻量版地图SDK V1.3.2**，它**不在 Maven 仓库**，且因授权限制**不随本仓库分发**（`android/app/libs/*.jar` 已在 `.gitignore` 中忽略）。
+> 请下载 <https://a.amap.com/lbs/static/amap_3dmap_lite/Lite3DMap.zip>，解压后把其中的 jar（形如 `Lite3DMap_1.3.2_AMapSearch_9.7.4_AMapLocation_6.4.9_*.jar`）放入 `android/app/libs/`（目录不存在就新建）。
+> 详见 `docs/SETUP_AMAP.md` 第 6 节。
 
 1. 按 `docs/SETUP_AMAP.md` 申请高德 Android Key（绑定包名 `com.family.share` + 你的签名 SHA1，勾选**地图 + 定位**）。
 2. 编辑 `android/gradle.properties`：
@@ -162,6 +167,11 @@ FAMILYSHARE/
 
 ## 📋 更新日志
 
+- 2026.09.10 因授权限制，高德轻量版地图SDK 的 jar 不再随仓库分发（`android/app/libs/*.jar`、`*.aar` 已加入 `.gitignore`）；客户端构建说明新增「先决条件：自行下载 Lite3DMap.zip 并把 jar 放入 `android/app/libs/`」。----- 提交于 2026.09.10
+- 2026.09.10 地图改用高德「轻量版地图SDK」V1.3.2（WebView 渲染、无原生 .so，合包含定位 6.4.9）：移除 Maven 的 `3dmap` 依赖，改为把 SDK jar 放入 `app/libs/`；地图对象改为异步就绪（`getMapAsyn`，就绪前跳过地图操作、就绪后补画标点/轨迹并定位相机）；移除轻量版不支持的指南针/缩放按钮/默认刻度尺设置与地图隐私接口调用。release APK 由约 17 MB 进一步降到约 3.3 MB。----- 提交于 2026.09.10
+- 2026.09.10 减小安装包体积：release 构建开启混淆（R8）与资源压缩（minifyEnabled + shrinkResources），并只打包 ARM 真机 ABI（去掉 armeabi / x86_64 的原生库）。release APK 由约 28 MB 以上降到约 17 MB；同时补齐高德地图与 ZXing 的混淆保留规则，避免混淆后运行异常。注：如需在 x86 模拟器安装 release 包，请自行放开 ABI 过滤。----- 提交于 2026.09.10
+- 2026.09.10 改进后台保活：新增系统级 JobScheduler 看门狗（15 分钟周期、重启后保留，与闹钟/前台服务多路兜底）；未加入电池优化/自启动白名单时每 3 天温和提醒一次。「关于」新增 GitHub 开源仓库地址；官网下载按钮由华为应用市场改为跳转 GitHub，隐私政策与个人信息保护权利页同步加入 GitHub 仓库链接。服务端新增只读状态看板（/dashboard/<token>：总用户数、在线设备、家庭数、CPU、内存、入站/出站带宽与压力波动曲线），仅聚合统计、不含任何隐私信息，也不提供任何修改入口。----- 提交于 2026.09.10
+- 2026.08.30 详情页保留刻度尺（不再消失）；「关于」新增备案号（鄂ICP备15020522号-2A）；加入家庭页的「扫码加入」改为醒目按钮，且扫码识别后直接确认加入（无需再点「确定」）。----- 提交于 2026.08.30
 - 2026.08.30 新增二维码：家庭码弹窗数字下方显示二维码；加入家庭弹窗在「加入家庭」选项的两个输入框下方新增「扫码加入」（灰色小字），相机权限仅在点击扫码时才申请；成员列表：群主置顶；成员超过 4 个时第 5 个露出一半作为可滚动提示。----- 提交于 2026.08.30
 - 2026.08.30 优化了列表下拉收缩的触发：只有列表“本就已在顶部、再往下拉”时才收缩；往下拉到顶的这一下不算，需到顶后重新下拉才收缩（避免滚到顶就误收起），上滑不再可能误触发收缩。----- 提交于 2026.08.30
 - 2026.08.30 调整了刷新与面板交互：家人位置更新时顶部提示「xxx 的位置已更新」（限频防刷屏）；展开态上滑仅滚动成员列表、不再误收起面板；灰色横条那一行任意位置均可上滑展开面板；成员列表最多同时显示 4 行、多余可上下滑动，滚到顶部后继续下拉收起面板。----- 提交于 2026.08.30

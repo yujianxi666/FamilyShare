@@ -9,3 +9,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# 高德轻量版地图SDK 等第三方 jar：因授权限制不随本仓库分发
+# 请按 README「客户端」说明，自行下载 Lite3DMap.zip 并把 jar 放入 app/libs/
+/app/libs/*.jar
+/app/libs/*.aar

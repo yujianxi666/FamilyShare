@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 扫码图标（二维码扫描：四角框 + 内部码点），使用处着色 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M3,3h8v2.5H5.5v5.5H3V3zM13,3h8v8h-2.5V5.5H13V3zM3,13h2.5v5.5H11V21H3V13zM13,18.5h5.5V13H21v8h-8v-2.5zM7,7h4v4H7V7zM13,7h4v4h-4V7zM7,13h4v4H7V13z" />
+</vector>

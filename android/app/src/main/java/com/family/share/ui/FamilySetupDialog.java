@@ -51,10 +51,11 @@ public final class FamilySetupDialog {
         View v = LayoutInflater.from(activity).inflate(R.layout.dialog_family_setup, null);
         RadioGroup rgMode = v.findViewById(R.id.rgMode);
         RadioButton radioCreate = v.findViewById(R.id.radioCreate);
+        RadioButton radioJoin = v.findViewById(R.id.radioJoin);
         EditText etName = v.findViewById(R.id.etName);
         EditText etCode = v.findViewById(R.id.etCode);
         TextView tvCurrentCode = v.findViewById(R.id.tvCurrentCode);
-        TextView tvScanJoin = v.findViewById(R.id.tvScanJoin);
+        View btnScanJoin = v.findViewById(R.id.btnScanJoin);
 
         final Prefs prefs = Prefs.get(activity);
         etName.setText(prefs.deviceName());
@@ -62,10 +63,10 @@ public final class FamilySetupDialog {
             tvCurrentCode.setText("当前家庭码：" + prefs.familyCode() + "（可分享给家人加入）");
             tvCurrentCode.setVisibility(View.VISIBLE);
         }
-        // 扫码加入：相机权限仅在点击「扫码加入」时才向用户申请；成功后把码填进家庭码输入框
+        // 扫码加入：相机权限仅在点击「扫码加入」按钮时才向用户申请
         if (scanToken != null && cameraPermLauncher != null && scanLauncher != null) {
             scanToken.joinCode = etCode;
-            tvScanJoin.setOnClickListener(btn -> {
+            btnScanJoin.setOnClickListener(btn -> {
                 if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.CAMERA)
                         != PackageManager.PERMISSION_GRANTED) {
                     scanToken.pendingScan = true;
@@ -75,17 +76,17 @@ public final class FamilySetupDialog {
                 }
             });
         } else {
-            tvScanJoin.setVisibility(View.GONE);
+            btnScanJoin.setVisibility(View.GONE);
         }
         rgMode.setOnCheckedChangeListener((g, id) -> {
             boolean join = id == R.id.radioJoin;
             etCode.setVisibility(join ? View.VISIBLE : View.GONE);
-            tvScanJoin.setVisibility(join ? View.VISIBLE : View.GONE);
+            btnScanJoin.setVisibility(join ? View.VISIBLE : View.GONE);
         });
         // 同步初始可见性：默认选中「加入家庭」时，家庭码输入框应立即显示（否则需先切走再切回才出现）
         boolean isJoin = rgMode.getCheckedRadioButtonId() == R.id.radioJoin;
         etCode.setVisibility(isJoin ? View.VISIBLE : View.GONE);
-        tvScanJoin.setVisibility(isJoin ? View.VISIBLE : View.GONE);
+        btnScanJoin.setVisibility(isJoin ? View.VISIBLE : View.GONE);
 
         AlertDialog dialog = new MaterialAlertDialogBuilder(activity)
                 .setView(v)
@@ -118,6 +119,25 @@ public final class FamilySetupDialog {
                         submit(activity, dialog, btn, prefs, create, name, code, listener);
                     }
                 }));
+
+        // 扫码成功后：切到「加入家庭」、填入家庭码并直接确认提交（无需再点「确定」）
+        if (scanToken != null) {
+            scanToken.onScanned = code -> {
+                if (code == null || code.isEmpty()) {
+                    return;
+                }
+                radioJoin.setChecked(true);
+                etCode.setVisibility(View.VISIBLE);
+                btnScanJoin.setVisibility(View.VISIBLE);
+                if (etName.getText().toString().trim().isEmpty()) {
+                    etName.setText(R.string.default_member_name);
+                }
+                etCode.setText(code);
+                dialog.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
+            };
+            // 对话框关闭后清空回调，避免持有已销毁的视图
+            dialog.setOnDismissListener(d -> scanToken.onScanned = null);
+        }
 
         dialog.show();
     }
@@ -183,8 +203,15 @@ public final class FamilySetupDialog {
      * joinCode  = 加入家庭对话框里的家庭码输入框（扫码成功后由宿主填码）；
      * pendingScan = 是否处于「点击了扫码、正在等待相机授权，授权后需自动启动扫码」的状态。
      */
+    /** 扫码结果回调（自定义接口，避免依赖 java.util.function，保证 API 23 可用） */
+    public interface CodeConsumer {
+        void accept(String code);
+    }
+
     public static final class ScanToken {
         public EditText joinCode;
         public boolean pendingScan;
+        /** 扫码成功后的处理：由对话框设置（填入家庭码并直接确认加入） */
+        public CodeConsumer onScanned;
     }
 }

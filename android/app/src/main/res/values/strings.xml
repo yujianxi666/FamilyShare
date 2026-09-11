@@ -19,6 +19,7 @@
     <string name="radio_join">加入家庭</string>
     <string name="hint_name">我的昵称</string>
     <string name="hint_family_code">6位家庭码（加入时填写）</string>
+    <string name="default_member_name">家人</string>
     <string name="btn_ok">确定</string>
     <string name="btn_cancel">取消</string>
 
@@ -108,6 +109,10 @@
     <string name="dialog_permission_message">需要“始终允许”定位权限，才能在后台持续共享位置</string>
     <string name="dialog_battery_title">后台保活设置</string>
     <string name="dialog_battery_message">请允许忽略电池优化，并在系统设置中为本应用开启“自启动”，防止被杀后台</string>
+    <string name="keepalive_title">后台保活建议</string>
+    <string name="keepalive_message">为了让家人随时看到你的位置，请允许本应用「忽略电池优化」，并在系统设置中开启「自启动」与后台运行。\n\n说明：微信等应用不易被系统清理，是因为它们被加入了厂商系统级白名单；普通应用无法获得该特权，只能由你手动加入省电/自启动白名单，才能长期在后台稳定运行。</string>
+    <string name="keepalive_go">去设置</string>
+    <string name="keepalive_later">稍后</string>
 
     <!-- 隐私说明（高德SDK隐私合规 + 首次启动告知） -->
     <string name="dialog_privacy_title">隐私与数据说明</string>
@@ -130,6 +135,9 @@
     <string name="menu_about">关于</string>
     <string name="about_developer">开发者</string>
     <string name="developer_name">YOUR_NAME</string>
+    <string name="about_icp">备案号</string>
+    <string name="icp_number">鄂ICP备15020522号-2A</string>
+    <string name="about_github">GitHub 开源仓库</string>
     <string name="toast_open_url_failed">无法打开链接</string>
 
     <!-- 检查更新 -->

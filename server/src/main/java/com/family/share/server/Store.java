@@ -512,6 +512,23 @@ public class Store {
         return out;
     }
 
+    /**
+     * 成员（设备）总数：仅返回一个数字，供只读统计看板使用。
+     * 一个设备同时只属于一个家庭，故累加各家庭成员数即为设备总数；不返回任何设备信息。
+     */
+    public synchronized int totalMemberCount() {
+        int n = 0;
+        for (Family f : families.values()) {
+            n += f.members.size();
+        }
+        return n;
+    }
+
+    /** 家庭总数：仅返回一个数字，供只读统计看板使用 */
+    public synchronized int familyCount() {
+        return families.size();
+    }
+
     private Map<String, Object> memberMap(Family f, Member m, Function<String, Boolean> isOnline) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("deviceId", m.deviceId);

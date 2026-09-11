@@ -100,6 +100,12 @@
             android:name=".receiver.KeepAliveReceiver"
             android:exported="false" />
 
+        <!-- 系统级看门狗（JobScheduler）：周期检查前台服务是否存活，被系统杀掉后由系统调度拉起 -->
+        <service
+            android:name=".service.WatchdogJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <!-- 更新 APK 安装（FileProvider 提供 URI 给系统安装器） -->
         <provider
             android:name="androidx.core.content.FileProvider"
