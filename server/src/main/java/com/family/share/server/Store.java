@@ -143,6 +143,8 @@ public class Store {
     private final Map<String, List<Location>> trajectories = new HashMap<>();
     /** 加入家庭的待审批申请（key = requestId） */
     private final Map<String, JoinRequest> joinRequests = new LinkedHashMap<>();
+    /** 首次从 Redis 载入是否完成（读接口据此做一次短暂等待） */
+    private final java.util.concurrent.CountDownLatch loaded = new java.util.concurrent.CountDownLatch(1);
     private final ScheduledExecutorService saver = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "store-saver");
         t.setDaemon(true);
@@ -151,9 +153,28 @@ public class Store {
 
     public Store(StringRedisTemplate redis) {
         this.redis = redis;
-        load();
+        // 载入放到后台线程：Redis 不可达时不会阻塞应用启动（读取路径会短暂等待，超时则先服务空数据）
+        Thread loader = new Thread(this::load, "store-loader");
+        loader.setDaemon(true);
+        loader.start();
         saver.scheduleWithFixedDelay(this::saveNow, 2, 2, TimeUnit.SECONDS);
         Runtime.getRuntime().addShutdownHook(new Thread(this::saveNow));
+    }
+
+    /**
+     * 等待首次载入完成（最多 waitMs 毫秒）。
+     * 读接口在数据表还是空的时候调用它，避免「刚重启时接口返回空列表」；
+     * 超时则直接返回，按当前（可能为空的）内存态服务，不阻塞请求线程。
+     */
+    private void awaitLoaded(long waitMs) {
+        if (loaded.getCount() == 0) {
+            return;
+        }
+        try {
+            loaded.await(waitMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     // ---------- 载入（从 Redis） ----------
@@ -208,40 +229,60 @@ public class Store {
                     + joinRequests.size() + " joinRequests");
         } catch (Exception e) {
             System.err.println("[store] load failed: " + e.getMessage());
+        } finally {
+            loaded.countDown();
         }
     }
 
     // ---------- 全量同步到 Redis（含删除对账，每 2 秒） ----------
 
+    /**
+     * 全量同步：先按「当前内存键集合」删除 Redis 里已不存在的键（删除对账），再写入当前数据。
+     * 顺序很重要——必须在写入索引 Set 之前算好快照，否则删除对账会看到自己刚加进去的键而永不生效。
+     */
     private synchronized void saveNow() {
         try {
-            // 家庭
-            reconcileSet(FAMILIES_KEY, FAMILY_PREFIX, families.keySet());
-            for (Family f : families.values()) {
+            // 1) 快照当前内存态（在锁内取，避免与并发修改冲突）
+            Map<String, Family> famSnap = new HashMap<>(families);
+            Map<String, Location> locSnap = new HashMap<>(locations);
+            Map<String, List<Location>> trajSnap = new HashMap<>(trajectories);
+            Map<String, JoinRequest> jrSnap = new LinkedHashMap<>(joinRequests);
+
+            // 2) 删除对账：索引 Set 里已不在内存表中的键，连同数据一起删除
+            reconcileSet(FAMILIES_KEY, FAMILY_PREFIX, famSnap.keySet());
+            reconcileSet(LOCATIONS_KEY, LOC_PREFIX, locSnap.keySet());
+            reconcileSet(TRAJECTORIES_KEY, TRAJ_PREFIX, trajSnap.keySet());
+            reconcileSet(JOINREQS_KEY, JOIN_PREFIX, jrSnap.keySet());
+
+            // 3) 写入当前数据
+            for (Family f : famSnap.values()) {
                 redis.opsForValue().set(FAMILY_PREFIX + f.id, mapper.writeValueAsString(toRecord(f)));
                 redis.opsForSet().add(FAMILIES_KEY, f.id);
             }
-            // 位置
-            reconcileSet(LOCATIONS_KEY, LOC_PREFIX, locations.keySet());
-            for (Map.Entry<String, Location> e : locations.entrySet()) {
+            for (Map.Entry<String, Location> e : locSnap.entrySet()) {
                 redis.opsForValue().set(LOC_PREFIX + e.getKey(), mapper.writeValueAsString(e.getValue()));
                 redis.opsForSet().add(LOCATIONS_KEY, e.getKey());
             }
-            // 轨迹
-            reconcileSet(TRAJECTORIES_KEY, TRAJ_PREFIX, trajectories.keySet());
-            for (Map.Entry<String, List<Location>> e : trajectories.entrySet()) {
+            for (Map.Entry<String, List<Location>> e : trajSnap.entrySet()) {
                 redis.opsForValue().set(TRAJ_PREFIX + e.getKey(), mapper.writeValueAsString(e.getValue()));
                 redis.opsForSet().add(TRAJECTORIES_KEY, e.getKey());
             }
             // 入群申请（保留全部状态，便于重启后仍能查到 pending/approved/rejected）
-            reconcileSet(JOINREQS_KEY, JOIN_PREFIX, joinRequests.keySet());
-            for (Map.Entry<String, JoinRequest> e : joinRequests.entrySet()) {
+            for (Map.Entry<String, JoinRequest> e : jrSnap.entrySet()) {
                 redis.opsForValue().set(JOIN_PREFIX + e.getKey(), mapper.writeValueAsString(e.getValue()));
                 redis.opsForSet().add(JOINREQS_KEY, e.getKey());
             }
         } catch (Exception e) {
             System.err.println("[store] save failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * 立即持久化一次（关键变更后调用，避免等下一次 2 秒周期；例如群主转让、成员移除）。
+     * 内部就是 saveNow，幂等且线程安全。
+     */
+    public void flush() {
+        saveNow();
     }
 
     /** 把 Redis 索引 Set 里已不在内存表的 key 删除（对账删除） */
@@ -294,8 +335,11 @@ public class Store {
 
     // ---------- 家庭 ----------
 
+    /**
+     * 创建新家庭。
+     * 注意：**不再把该设备从原有家庭中移除**——同一设备可以同时属于多个家庭（客户端可在家庭间左右滑动切换）。
+     */
     public synchronized Family createFamily(String deviceId, String name) {
-        removeDeviceFromAllFamilies(deviceId);
         String code = randomCode();
         while (codeExists(code)) {
             code = randomCode();
@@ -315,25 +359,160 @@ public class Store {
         return f;
     }
 
-    /** 通过家庭码加入；家庭不存在或已拉黑返回 null */
+    /** 通过家庭码加入；家庭不存在或已拉黑返回 null。
+     *  说明：正常入群流程走「申请 + 群主同意」（createJoinRequest/handleJoinRequest），
+     *  本方法仅保留给需要立即入群的内部场景（如未来「免审批加入」开关）。
+     *  同样**不再移除该设备的其它家庭**：可同时属于多个家庭。 */
     public synchronized Family joinFamily(String code, String deviceId, String name) {
         Family f = findFamilyByCode(code);
         if (f == null || f.banned.containsKey(deviceId)) {
             return null;
         }
-        removeDeviceFromAllFamilies(deviceId);
         f.members.put(deviceId, new Member(deviceId, name));
         return f;
     }
 
+    /** 某设备加入的全部家庭（按创建时间升序，供客户端列出/切换家庭） */
+    public synchronized List<Family> familiesOf(String deviceId) {
+        List<Family> out = new ArrayList<>();
+        if (deviceId == null) {
+            return out;
+        }
+        for (Family f : families.values()) {
+            if (f.members.containsKey(deviceId)) {
+                out.add(f);
+            }
+        }
+        out.sort((a, b) -> Long.compare(a.createdAt, b.createdAt));
+        return out;
+    }
+
+    /**
+     * 解散家庭（仅群主，由 ApiController 校验）：把家庭从存储中整体删除。
+     * 成员设备在客户端的家庭列表会自动剔除该家庭。
+     */
+    public synchronized boolean disbandFamily(String familyId) {
+        Family f = familyNoWait(familyId);
+        if (f == null) {
+            return false;
+        }
+        List<String> memberIds = new ArrayList<>(f.members.keySet());
+        families.remove(familyId);
+        for (String d : memberIds) {
+            locations.remove(d);
+            trajectories.remove(d);
+        }
+        // 清掉指向该家庭的待审批申请
+        java.util.Iterator<JoinRequest> it = joinRequests.values().iterator();
+        while (it.hasNext()) {
+            if (familyId.equals(it.next().familyId)) {
+                it.remove();
+            }
+        }
+        // 该设备若没有其它家庭，则其位置/轨迹也不再需要保留
+        for (String d : memberIds) {
+            if (familiesOf(d).isEmpty()) {
+                locations.remove(d);
+                trajectories.remove(d);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 更新成员连接状态（下线模式）与昵称，连接建立时由 WsHandler 调用。
+     * 放到 Store 内加锁执行，避免与每 2 秒的持久化快照、成员列表读取并发修改同一个 Member 对象。
+     */
+    public synchronized void setMemberConnected(String familyId, String deviceId, boolean offline, String name) {
+        Family f = familyNoWait(familyId);
+        if (f == null) {
+            return;
+        }
+        Member m = f.members.get(deviceId);
+        if (m == null) {
+            return;
+        }
+        m.offline = offline;
+        if (name != null && !name.isEmpty()) {
+            m.name = name;
+        }
+    }
+
+    /** 成员是否仍属于该家庭（WebSocket 连接鉴权用，加锁读取） */
+    public synchronized boolean isMember(String familyId, String deviceId) {
+        Family f = familyNoWait(familyId);
+        return f != null && deviceId != null && f.members.containsKey(deviceId);
+    }
+
+    /** 成员昵称（家庭成员校验通过后用于广播；不存在返回 null） */
+    public synchronized String memberName(String familyId, String deviceId) {
+        Family f = familyNoWait(familyId);
+        if (f == null) {
+            return null;
+        }
+        Member m = f.members.get(deviceId);
+        return m == null ? null : m.name;
+    }
+
+    /** 成员轨迹开关（连接时下发；不存在返回 null） */
+    public synchronized Boolean memberTrack(String familyId, String deviceId) {
+        Family f = familyNoWait(familyId);
+        if (f == null) {
+            return null;
+        }
+        Member m = f.members.get(deviceId);
+        return m == null ? null : m.track;
+    }
+
+    /** 家庭成员 deviceId 快照（广播遍历用，避免并发修改异常） */
+    public synchronized List<String> memberIds(String familyId) {
+        Family f = familyNoWait(familyId);
+        if (f == null) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(f.members.keySet());
+    }
+
+    /** 成员是否处于下线模式（连接关闭广播用；不存在返回 null） */
+    public synchronized Boolean memberOffline(String familyId, String deviceId) {
+        Family f = familyNoWait(familyId);
+        if (f == null) {
+            return null;
+        }
+        Member m = f.members.get(deviceId);
+        return m == null ? null : m.offline;
+    }
+
     public synchronized Family getFamily(String familyId) {
+        if (familyId == null) {
+            return null;
+        }
+        if (!families.containsKey(familyId)) {
+            awaitLoaded(300); // 刚重启时数据可能还在载入：短暂等一下，避免误判「家庭不存在」
+        }
+        return families.get(familyId);
+    }
+
+    /** 跳过等待直接取家庭（内部/写路径用，避免持锁等待） */
+    private Family familyNoWait(String familyId) {
         return familyId == null ? null : families.get(familyId);
     }
 
     public synchronized Family findFamilyByCode(String code) {
+        if (code == null) {
+            return null;
+        }
         for (Family f : families.values()) {
             if (f.code.equals(code)) {
                 return f;
+            }
+        }
+        if (families.isEmpty()) {
+            awaitLoaded(300);
+            for (Family f : families.values()) {
+                if (f.code.equals(code)) {
+                    return f;
+                }
             }
         }
         return null;
@@ -364,7 +543,7 @@ public class Store {
                 return r;
             }
         }
-        String id = "jr_" + Long.toHexString(System.nanoTime()) + "_" + Math.abs(new Random().nextInt(1000));
+        String id = "jr_" + java.util.UUID.randomUUID().toString().replace("-", "");
         JoinRequest r = new JoinRequest(id, f.id, f.code, deviceId, name == null ? deviceId : name);
         joinRequests.put(id, r);
         return r;
@@ -390,7 +569,7 @@ public class Store {
                 r.status = "rejected";
                 return r;
             }
-            removeDeviceFromAllFamilies(r.deviceId);
+            // 只加入本家庭，不动该设备的其它家庭（支持同时属于多个家庭）
             f.members.put(r.deviceId, new Member(r.deviceId, r.name));
         }
         return r;
@@ -514,14 +693,14 @@ public class Store {
 
     /**
      * 成员（设备）总数：仅返回一个数字，供只读统计看板使用。
-     * 一个设备同时只属于一个家庭，故累加各家庭成员数即为设备总数；不返回任何设备信息。
+     * 同一设备可能同时属于多个家庭，这里按「去重后的设备数」统计，避免重复计数。
      */
     public synchronized int totalMemberCount() {
-        int n = 0;
+        java.util.Set<String> devices = new java.util.HashSet<>();
         for (Family f : families.values()) {
-            n += f.members.size();
+            devices.addAll(f.members.keySet());
         }
-        return n;
+        return devices.size();
     }
 
     /** 家庭总数：仅返回一个数字，供只读统计看板使用 */
@@ -580,14 +759,20 @@ public class Store {
 
     // ---------- 内部 ----------
 
-    /** 把设备从所有家庭移除（创建/加入/被审批加入新家庭时调用，保证设备不被其它任何家庭列出） */
-    public synchronized void removeDeviceFromAllFamilies(String deviceId) {
-        for (Family f : families.values()) {
-            if (f.members.remove(deviceId) != null) {
-                locations.remove(deviceId);
-                trajectories.remove(deviceId);
-            }
+    /**
+     * 把设备从指定的一个家庭移除（退出家庭用；只影响这一个家庭，其它家庭保留）。
+     * 该设备不再属于任何家庭时，顺带清掉它的位置与轨迹。
+     */
+    public synchronized boolean leaveFamily(String familyId, String deviceId) {
+        Family f = familyNoWait(familyId);
+        if (f == null || f.members.remove(deviceId) == null) {
+            return false;
         }
+        if (familiesOf(deviceId).isEmpty()) {
+            locations.remove(deviceId);
+            trajectories.remove(deviceId);
+        }
+        return true;
     }
 
     private String randomCode() {
@@ -595,7 +780,7 @@ public class Store {
     }
 
     private String randomFamilyId() {
-        return "fam_" + Long.toHexString(System.nanoTime()) + new Random().nextInt(1000);
+        return "fam_" + java.util.UUID.randomUUID().toString().replace("-", "");
     }
 
     private boolean codeExists(String code) {

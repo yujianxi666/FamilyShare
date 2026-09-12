@@ -12,6 +12,9 @@
     <string name="btn_family_setup">切换家庭</string>
     <string name="btn_battery">权限设置</string>
     <string name="no_member_yet">还没有家人，点击下方按钮创建/加入家庭</string>
+    <string name="empty_family_title">还没有家人</string>
+    <string name="empty_family_desc">创建一个家庭，把家庭码分享给家人\n他们申请加入后就能在地图上看到彼此</string>
+    <string name="empty_family_action">创建 / 加入家庭</string>
 
     <!-- 家庭设置 -->
     <string name="dialog_family_title">家庭设置</string>
@@ -54,8 +57,26 @@
     <string name="scan_prompt">请扫描家人分享的二维码</string>
     <string name="toast_need_camera_permission">需要相机权限才能扫码加入</string>
     <string name="toast_code_scanned">已识别，请确认家庭码后加入</string>
-    <string name="dialog_switch_confirm_message">切换家庭后将不再显示原家庭成员的位置，确定切换？</string>
-    <string name="dialog_switch_confirm_ok">确定切换</string>
+    <string name="dialog_switch_confirm_message">将新增一个家庭并切换过去，原有的家庭不会被退出（主页面左右滑动可在家庭间切换）。确定继续？</string>
+    <string name="dialog_switch_confirm_ok">确定新增</string>
+    <string name="dialog_disband_title">解散家庭</string>
+    <string name="dialog_disband_message">解散后该家庭将被删除，所有成员都会退出且无法恢复。确定解散吗？</string>
+    <string name="dialog_disband_ok">确定解散</string>
+    <string name="menu_disband_family">解散家庭</string>
+    <string name="toast_disband_done">家庭已解散</string>
+    <string name="toast_family_switched">已切换到「%1$s」</string>
+    <string name="toast_family_disbanded">「%1$s」已被群主解散</string>
+    <string name="toast_last_family_disbanded">最后一个家庭已解散，请重新创建或加入家庭</string>
+    <string name="toast_removed_from_family">你已被移出「%1$s」</string>
+    <string name="title_family_short">家庭</string>
+    <string name="title_family_name">%1$s · 家庭成员</string>
+    <string name="btn_switch_family">切换家庭</string>
+    <string name="dialog_switch_family_title">切换家庭</string>
+    <string name="dialog_add_family_hint">可以创建或加入一个家庭；原有的家庭会保留，随时可以切回来。</string>
+    <string name="dialog_add_family_ok">创建 / 加入家庭</string>
+    <string name="family_current">当前</string>
+    <string name="family_member_unit">人</string>
+    <string name="toast_loading">加载中…</string>
 
     <!-- 一键刷新 -->
     <string name="menu_refresh">一键刷新</string>
@@ -134,7 +155,7 @@
     <string name="menu_privacy_rights">隐私权利</string>
     <string name="menu_about">关于</string>
     <string name="about_developer">开发者</string>
-    <string name="developer_name">YOUR_NAME</string>
+    <string name="developer_name">KeepHope2901</string>
     <string name="about_icp">备案号</string>
     <string name="icp_number">鄂ICP备15020522号-2A</string>
     <string name="about_github">GitHub 开源仓库</string>

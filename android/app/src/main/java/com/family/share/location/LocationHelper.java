@@ -104,6 +104,17 @@ public class LocationHelper {
                     cb.onError("定位组件已释放");
                     return;
                 }
+                // 上一次单次定位还没结束时又来了新请求（如家人连续点「刷新」）：
+                // 直接覆盖会让上一次的等待方永远收不到回调，这里先通知它取消，再开始新的收集
+                if (current != null && current != cb) {
+                    Callback prev = current;
+                    current = null;
+                    main.removeCallbacks(settleRunnable);
+                    try {
+                        prev.onError("已被新的定位请求取代");
+                    } catch (Exception ignored) {
+                    }
+                }
                 current = cb;
                 haveFix = false;
                 bestAcc = Float.MAX_VALUE;

@@ -73,6 +73,122 @@ public class Prefs {
         sp.edit().putString("pending_join_request_id", id == null ? "" : id).apply();
     }
 
+    // ---------- 已加入的家庭列表（支持同一设备同时属于多个家庭；主页面左右滑动切换） ----------
+
+    /** 已加入的家庭 ID 列表（'\n' 分隔） */
+    public java.util.List<String> familyIds() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        String raw = sp.getString("family_ids", "");
+        if (raw == null || raw.isEmpty()) {
+            // 兼容旧版本：原来只存单个 family_id，这里迁移过来
+            String only = familyId();
+            if (only != null && !only.isEmpty()) {
+                out.add(only);
+            }
+            return out;
+        }
+        for (String s : raw.split("\n")) {
+            String v = s.trim();
+            if (!v.isEmpty() && !out.contains(v)) {
+                out.add(v);
+            }
+        }
+        return out;
+    }
+
+    public void familyIds(java.util.List<String> ids) {
+        StringBuilder sb = new StringBuilder();
+        if (ids != null) {
+            for (String id : ids) {
+                if (id == null || id.isEmpty() || sb.indexOf(id) >= 0) {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append('\n');
+                }
+                sb.append(id);
+            }
+        }
+        sp.edit().putString("family_ids", sb.toString()).apply();
+    }
+
+    /** 新增一个家庭并把它设为当前激活家庭（已存在则只切换过去） */
+    public void addFamily(String id, String code) {
+        if (id == null || id.isEmpty()) {
+            return;
+        }
+        java.util.List<String> list = familyIds();
+        list.remove(id);
+        list.add(0, id); // 最新创建/加入的放最前，作为当前家庭
+        familyIds(list);
+        familyId(id);
+        if (code != null && !code.isEmpty()) {
+            familyCode(id, code);
+            // 同步写一份旧的单家庭字段：老代码/旧数据的兜底读取仍能拿到当前家庭码
+            familyCode(code);
+        }
+    }
+
+    /** 记录某个家庭的家庭码（多家庭切换时用于展示当前家庭码） */
+    public void familyCode(String familyId, String code) {
+        if (familyId == null || familyId.isEmpty() || code == null || code.isEmpty()) {
+            return;
+        }
+        java.util.Map<String, String> map = familyCodes();
+        map.put(familyId, code);
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : map.entrySet()) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(e.getKey()).append('|').append(e.getValue());
+        }
+        sp.edit().putString("family_codes", sb.toString()).apply();
+    }
+
+    /** 家庭 ID -> 家庭码（多家庭时每个家庭各自的码） */
+    public java.util.Map<String, String> familyCodes() {
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        String raw = sp.getString("family_codes", "");
+        if (raw != null && !raw.isEmpty()) {
+            for (String line : raw.split("\n")) {
+                int i = line.indexOf('|');
+                if (i > 0 && i < line.length() - 1) {
+                    out.put(line.substring(0, i), line.substring(i + 1));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 取某家庭的家庭码（多家庭时优先取该家庭自己的码） */
+    public String familyCodeOf(String familyId) {
+        if (familyId == null || familyId.isEmpty()) {
+            return "";
+        }
+        String c = familyCodes().get(familyId);
+        if (c != null && !c.isEmpty()) {
+            return c;
+        }
+        // 兼容旧数据：只有单个家庭码且就是当前家庭
+        return familyId.equals(familyId()) ? familyCode() : "";
+    }
+
+    /** 从已加入列表移除某个家庭（退出/被移出/被解散） */
+    public void removeFamily(String id) {
+        if (id == null || id.isEmpty()) {
+            return;
+        }
+        java.util.List<String> list = familyIds();
+        if (!list.remove(id)) {
+            return;
+        }
+        familyIds(list);
+        if (id.equals(familyId())) {
+            familyId(list.isEmpty() ? "" : list.get(0));
+        }
+    }
+
     /** 是否是家庭创建者（拥有移出成员的权限） */
     public boolean isOwner() {
         return sp.getBoolean("is_owner", false);
@@ -229,6 +345,16 @@ public class Prefs {
 
     public void activeServerIndex(int v) {
         sp.edit().putInt("active_server_index", v).apply();
+    }
+
+    // ---------- 通用整数配置（如标点垂直微调） ----------
+
+    public int getInt(String key, int defValue) {
+        return sp.getInt(key, defValue);
+    }
+
+    public void putInt(String key, int value) {
+        sp.edit().putInt(key, value).apply();
     }
 
     // ---------- Bug 处理结果告知 ----------

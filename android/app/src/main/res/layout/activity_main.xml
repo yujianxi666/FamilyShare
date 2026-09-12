@@ -55,11 +55,11 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- 灰色小横条：32dp 高触摸区（视觉 6dp 细条），扩大拖拽识别范围 -->
+        <!-- 灰色小横条：视觉仍是细条，但触摸区做成整行（宽 50% 面板宽 × 40dp 高），更容易按住拖拽 -->
         <View
             android:id="@+id/dragHandle"
-            android:layout_width="88dp"
-            android:layout_height="32dp"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
             android:layout_gravity="center_horizontal"
             android:background="@drawable/bg_drag_handle_area" />
 
@@ -166,13 +166,41 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/memberList"
+            <!-- 成员列表：底部叠加透明渐变 + 「还有更多」提示，一行只露出半截也能看出下面还有人 -->
+            <FrameLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:clipToPadding="false"
-                android:maxHeight="250dp"
-                android:overScrollMode="never" />
+                android:layout_height="wrap_content">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/memberList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipToPadding="false"
+                    android:maxHeight="250dp"
+                    android:overScrollMode="never" />
+
+                <!-- 顶部渐隐（上方还有内容时显示，被裁掉的那半行自然淡出） -->
+                <View
+                    android:id="@+id/listTopMore"
+                    android:layout_width="match_parent"
+                    android:layout_height="26dp"
+                    android:layout_gravity="top"
+                    android:background="@drawable/bg_fade_top"
+                    android:clickable="false"
+                    android:focusable="false"
+                    android:visibility="gone" />
+
+                <!-- 底部渐隐（下方还有内容时显示，半截行淡出提示可下滑） -->
+                <View
+                    android:id="@+id/listBottomMore"
+                    android:layout_width="match_parent"
+                    android:layout_height="30dp"
+                    android:layout_gravity="bottom"
+                    android:background="@drawable/bg_fade_bottom"
+                    android:clickable="false"
+                    android:focusable="false"
+                    android:visibility="gone" />
+            </FrameLayout>
 
             <TextView
                 android:id="@+id/tvEmpty"
@@ -184,6 +212,59 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp"
                 android:visibility="gone" />
+
+            <!-- 空状态引导卡片：没有家人时给出明确入口（比一行灰字更容易上手） -->
+            <LinearLayout
+                android:id="@+id/emptyCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_empty_card"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingTop="18dp"
+                android:paddingBottom="16dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
+                    android:alpha="0.85"
+                    android:contentDescription="@string/empty_family_title"
+                    android:src="@drawable/ic_people"
+                    app:tint="@color/primary" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/empty_family_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:lineSpacingExtra="2dp"
+                    android:text="@string/empty_family_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnEmptyAction"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="38dp"
+                    android:text="@string/empty_family_action"
+                    android:textSize="13sp" />
+            </LinearLayout>
 
             <View
                 android:layout_width="match_parent"
@@ -208,6 +289,23 @@
             app:iconGravity="textStart"
             app:iconSize="18dp"
             app:iconTint="@color/white" />
+
+        <!-- 切换家庭：存在多个家庭时显示（替代原来的左右滑动切换） -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSwitchFamily"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="42dp"
+            android:text="@string/btn_switch_family"
+            android:textSize="14sp"
+            android:visibility="gone"
+            app:icon="@drawable/ic_people"
+            app:iconGravity="textStart"
+            app:iconSize="18dp" />
         </LinearLayout>
 
         <!-- 成员详情（内嵌在悬浮窗口内查看，不弹窗） -->

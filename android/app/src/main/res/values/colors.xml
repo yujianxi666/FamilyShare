@@ -35,4 +35,6 @@
     <color name="drag_handle">#C4C9D4</color>
     <color name="bg_popup">#FFFFFF</color>
     <color name="bg_overflow">#FFFFFF</color>
+    <!-- 成员列表行卡片底色（比面板底色略深一点，形成层次） -->
+    <color name="bg_row">#F7F8FC</color>
 </resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 列表底部渐隐：下方还有家人时，从「透明」渐变到「面板底色」，半个标签淡出提示"还可以下滑" -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="@android:color/transparent"
+        android:endColor="@color/bg_panel"
+        android:type="linear" />
+</shape>

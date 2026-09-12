@@ -103,6 +103,17 @@ public final class Api {
                         "ban", ban), cb);
     }
 
+    /** 我加入的全部家庭（支持同时属于多个家庭；主页面左右滑动切换用） */
+    public static void myFamilies(String deviceId, Callback cb) {
+        get("/api/family/my?deviceId=" + Uri.encode(deviceId), cb);
+    }
+
+    /** 群主一键解散家庭 */
+    public static void disbandFamily(String familyId, String ownerDeviceId, Callback cb) {
+        post("/api/family/disband",
+                json("familyId", familyId, "ownerDeviceId", ownerDeviceId), cb);
+    }
+
     // ---------------- 成员状态 / 轨迹 ----------------
 
     /** 开关轨迹功能（所有成员可用；intervalMs>0 时同时设置轨迹更新间隔，如 1/3/5 分钟） */

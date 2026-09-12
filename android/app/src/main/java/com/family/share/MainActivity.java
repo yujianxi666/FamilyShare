@@ -29,6 +29,7 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -117,24 +118,26 @@ public class MainActivity extends AppCompatActivity {
 
     private MapView mapView;
     private AMap aMap;
-    /** 地图是否已就绪：轻量版地图SDK 为异步就绪（getMapAsyn），未就绪前跳过所有地图操作 */
+    /** 地图是否已就绪（完整版 3D SDK 同步就绪，getMap() 返回后即可用） */
     private boolean mapReady;
     private RecyclerView memberList;
     private MemberAdapter adapter;
     private TextView tvStatus;
     private TextView tvEmpty;
+    /** 空状态引导卡片（没有家人时显示创建/加入家庭入口） */
+    private View emptyCard;
     private View statusDot;
     private View statusPill;
     private String pendingFocusDeviceId = "";
-    /** 成员列表按下时的 Y 坐标（用于“列表到顶后下拉收缩面板”） */
-    private float memberDownY;
-    /** 本次列表下拉是否已触发过收缩（防止一次拖动重复触发） */
-    private boolean listPullHandled;
-    /** 按下瞬间成员列表是否已在顶部：只有“按下时已在顶部”的下拉才触发收缩；
-     *  下拉过程中滚到顶部不收缩，需“到顶后再往下拉一次”才收缩（避免滚到顶部就误收起）。 */
-    private boolean memberListAtTop;
+    /** 成员清单里「本机排最前」用的 deviceId */
+    private String myDeviceId = "";
     /** 成员人数简洁标签（如“家庭成员（3）”） */
     private TextView tvMemberCount;
+    /** 广播接收器是否已注册（onResume/onPause 幂等保护，避免重复注册/注销崩溃） */
+    private boolean receiverRegistered;
+    /** 成员列表顶部/底部渐隐与「还有更多」提示（列表被裁剪时说明还有成员） */
+    private View listTopMore;
+    private View listBottomMore;
 
     // 下载更新进度
     private AlertDialog downloadDialog;
@@ -242,14 +245,32 @@ public class MainActivity extends AppCompatActivity {
     private final Map<String, Marker> markers = new HashMap<>();
     /** 成员精度圈（以角标为圆心，半径=定位精度） */
     private final Map<String, Circle> accuracyCircles = new HashMap<>();
-    private String myDeviceId = "";
+    /**
+     * 成员标点图标缓存（deviceId -> 图标描述）。
+     * 标点图标只与「昵称 / 头像 / 是否本机」有关，与经纬度无关：
+     * 缓存后位置刷新不再重复生成位图。
+     * 必要性：轻量版地图SDK 会把每个图标位图按 id 缓存进内存（不回收），
+     * 若每次位置更新都新建图标，长时间运行会持续累积位图，且每次都要重新编码 PNG。
+     */
+    private final Map<String, MemberIcon> iconCache = new HashMap<>();
+
+    /** 缓存的成员标点图标：key 记录生成时的昵称/头像，变化时重建 */
+    private static final class MemberIcon {
+        final String key;
+        final BitmapDescriptor descriptor;
+
+        MemberIcon(String key, BitmapDescriptor descriptor) {
+            this.key = key;
+            this.descriptor = descriptor;
+        }
+    }
     /** 打开/回到前台时，若在多人家庭则自动向全员请求一次实时位置（只在一次成员列表渲染后消费，用底部 toast 提示、不弹窗） */
     private boolean entryRefreshArmed;
     /** 最近一次切换服务器的时间戳：用于防止切换后成员列表被清空导致绿点消失 */
     private long serverSwitchAt;
 
-    /** 家人列表最多同时显示的成员行数：超过则可上下滚动，滚到顶部后下拉收起面板 */
-    private static final int MAX_VISIBLE_MEMBERS = 4;
+    /** 家人列表最多同时显示的成员行数：超过则可上下滚动，底部露出下一行的一部分作为"还有更多"提示 */
+    private static final float MAX_VISIBLE_MEMBERS = 3.6f;
     /** 单行成员的高度（px），首次需要固定列表高度时按样例项测量一次 */
     private int memberRowHeightPx;
     /** 上一帧「位置更新」文字提示时间戳：限制频率，避免多成员同时上报时连续弹多个提示 */
@@ -281,6 +302,12 @@ public class MainActivity extends AppCompatActivity {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
             if (AppConfig.BROADCAST_LOCATION_UPDATE.equals(action)) {
+                // 只接受「当前家庭」的位置广播：切换家庭后，上一个家庭迟到的广播必须丢弃（避免串台）
+                String broadcastFamily = intent.getStringExtra("familyId");
+                if (broadcastFamily != null && !broadcastFamily.isEmpty()
+                        && !broadcastFamily.equals(Prefs.get(MainActivity.this).familyId())) {
+                    return;
+                }
                 Member m = new Member();
                 m.deviceId = intent.getStringExtra("deviceId");
                 m.name = intent.getStringExtra("name");
@@ -374,6 +401,10 @@ public class MainActivity extends AppCompatActivity {
                             intent.getStringExtra("deviceId"), intent.getStringExtra("name"));
                     toast(getString(R.string.toast_join_request_added));
                 }
+            } else if (AppConfig.BROADCAST_FAMILY_DISBANDED.equals(action)) {
+                // 当前家庭被群主解散：从本地家庭列表移除，若还有其它家庭则自动切过去
+                String familyId = intent.getStringExtra("familyId");
+                onFamilyDisbanded(familyId);
             }
         }
     };
@@ -385,26 +416,19 @@ public class MainActivity extends AppCompatActivity {
 
         myDeviceId = Prefs.get(this).deviceId();
 
-        // 地图（轻量版地图SDK：基于 WebView，地图对象**异步**就绪，没有 getMap()）
+        // 地图（完整版 3D 地图 SDK：原生渲染，地图对象同步就绪）
         mapView = findViewById(R.id.mapView);
         mapView.onCreate(savedInstanceState);
-        mapView.getMapAsyn(map -> {
-            aMap = map;
+        // 布局稳定后再对一次容器尺寸，避免容器尺寸过期导致标注层按错误比例移动
+        mapView.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> scheduleMapRelayout());
+        aMap = mapView.getMap();
+        if (aMap != null) {
             mapReady = true;
             aMap.setMapType(AMap.MAP_TYPE_NORMAL);
-            // 注意：轻量版地图SDK 的 UiSettings 只有手势开关，没有指南针/缩放按钮/默认刻度尺控制，
-            // 因此这里不再调用 setCompassEnabled/setZoomControlsEnabled；刻度尺由本应用自绘（initScaleBar）。
-            initScaleBar(); // 自绘刻度尺（默认刻度尺会被底部面板遮挡）
-            // 地图就绪后，把「就绪前」已经拿到的成员位置/轨迹补画上去，并定位相机
-            for (Member m : members.values()) {
-                updateMarker(m);
-            }
-            updateTrackLines(new ArrayList<>(members.values()));
-            updateScaleBarPosition();
-            if (!members.isEmpty()) {
-                fitCameraToMembers();
-            }
-        });
+            // 注意：这里不能再直接调用 initScaleBar()/updateScaleBarPosition()——
+            // 此刻面板相关 View（bottomPanel 等）还没 findViewById，会空指针崩溃（历史 bug）。
+            // 面板与刻度尺的初始化统一放到所有 View 就绪后（见 postPanelReadyInit()）。
+        }
 
         // 家人列表
         memberList = findViewById(R.id.memberList);
@@ -428,9 +452,20 @@ public class MainActivity extends AppCompatActivity {
 
         tvStatus = findViewById(R.id.tvStatus);
         tvEmpty = findViewById(R.id.tvEmpty);
+        // 空状态引导卡片：没有家人时显示「创建 / 加入家庭」入口
+        emptyCard = findViewById(R.id.emptyCard);
+        View btnEmptyAction = findViewById(R.id.btnEmptyAction);
+        if (btnEmptyAction != null) {
+            btnEmptyAction.setOnClickListener(v -> showFamilySetup());
+        }
         statusDot = findViewById(R.id.statusDot);
         statusPill = findViewById(R.id.statusPill);
         findViewById(R.id.btnLocateMe).setOnClickListener(v -> onLocateMe());
+        // 切换家庭按钮（在「定位我」下方；只有一个家庭时也可用来新增家庭）
+        btnSwitchFamily = findViewById(R.id.btnSwitchFamily);
+        if (btnSwitchFamily != null) {
+            btnSwitchFamily.setOnClickListener(v -> showSwitchFamilyDialog());
+        }
 
         // 响铃时显示的「关闭响铃」按钮（收到响铃开始广播后出现）
         btnStopRing = findViewById(R.id.btnStopRing);
@@ -453,40 +488,18 @@ public class MainActivity extends AppCompatActivity {
         dragHandle.setOnTouchListener(dragListener);
         // 详情页：在详情任意区域下拉即可收缩详情（不返回列表）
         detailArea.setOnTouchListener(dragListener);
-        // 成员列表：已在顶部时继续向下拉 -> 平滑收缩面板（否则列表正常滚动）
-        memberList.setOnTouchListener((v, ev) -> {
-            switch (ev.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    memberDownY = ev.getRawY();
-                    listPullHandled = false;
-                    // 记录按下瞬间列表是否已在顶部：收缩只在“本就已在顶部，再下拉”时触发
-                    memberListAtTop = !memberList.canScrollVertically(-1);
-                    return false;
-                case MotionEvent.ACTION_MOVE:
-                    if (listPullHandled) {
-                        // 已触发收缩：本次手势的后续 move 一律消费，避免污染 RecyclerView 手势状态导致下次失效
-                        return true;
-                    }
-                    if (!isDetailOpen() && memberListAtTop
-                            && ev.getRawY() - memberDownY > ViewConfiguration.get(MainActivity.this).getScaledTouchSlop()) {
-                        listPullHandled = true;
-                        // 平滑下拉收缩（带动画，避免生硬）
-                        if (!panelCollapsed) {
-                            animatePanelTranslation(bottomPanel.getTranslationY(), panelMaxTranslate(), true);
-                        }
-                        return true;
-                    }
-                    return false;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    listPullHandled = false;
-                    return false;
-                default:
-                    return false;
-            }
-        });
+        // 成员列表：只负责滚动列表本身（切换家庭改用「切换家庭」按钮，不再用左右滑动）
         // 成员人数标签
         tvMemberCount = findViewById(R.id.tvMemberCount);
+        // 列表渐隐 + 「还有更多家人」提示
+        listTopMore = findViewById(R.id.listTopMore);
+        listBottomMore = findViewById(R.id.listBottomMore);
+        memberList.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                updateMoreMembersHint();
+            }
+        });
 
         // 返回键 / 侧滑返回：在成员详情等子页面时返回主界面，而不是直接退出 App
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -522,6 +535,9 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
+        // 所有 View 都已就绪：做面板/刻度尺/标点的初始化（放在最后，避免用到未初始化的 View）
+        postPanelReadyInit();
+
         // 首启引导：隐私 -> 运行时权限 -> 后台定位 -> 电池优化，按顺序一个个弹，避免一次性弹出太多权限弹窗
         if (Prefs.get(this).familyId().isEmpty()) {
             // 首次使用：先建/入家庭，进入家庭后再依次引导权限（见 onDone 里的 startFirstRunGuidedFlow）
@@ -542,19 +558,26 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         mapView.onResume();
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(AppConfig.BROADCAST_LOCATION_UPDATE);
-        filter.addAction(AppConfig.BROADCAST_MEMBER_STATUS);
-        filter.addAction(AppConfig.BROADCAST_SERVICE_STATUS);
-        filter.addAction(AppConfig.BROADCAST_RING_STARTED);
-        filter.addAction(AppConfig.BROADCAST_RING_STOPPED);
-        filter.addAction(AppConfig.BROADCAST_MEMBER_REMOVED);
-        filter.addAction(AppConfig.BROADCAST_MEMBER_JOINED);
-        filter.addAction(AppConfig.BROADCAST_OWNER_CHANGED);
-        filter.addAction(AppConfig.BROADCAST_INVITE);
-        filter.addAction(AppConfig.BROADCAST_JOIN_REQUEST);
-        // 广播均来自本应用自身，声明 NOT_EXPORTED 兼容 Android 13+
-        ContextCompat.registerReceiver(this, uiReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
+        scheduleMapRelayout(); // 从后台/系统设置返回后，重新对齐一次容器尺寸
+        if (!receiverRegistered) {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(AppConfig.BROADCAST_LOCATION_UPDATE);
+            filter.addAction(AppConfig.BROADCAST_MEMBER_STATUS);
+            filter.addAction(AppConfig.BROADCAST_SERVICE_STATUS);
+            filter.addAction(AppConfig.BROADCAST_RING_STARTED);
+            filter.addAction(AppConfig.BROADCAST_RING_STOPPED);
+            filter.addAction(AppConfig.BROADCAST_MEMBER_REMOVED);
+            filter.addAction(AppConfig.BROADCAST_MEMBER_JOINED);
+            filter.addAction(AppConfig.BROADCAST_OWNER_CHANGED);
+            filter.addAction(AppConfig.BROADCAST_INVITE);
+            filter.addAction(AppConfig.BROADCAST_JOIN_REQUEST);
+            filter.addAction(AppConfig.BROADCAST_FAMILY_DISBANDED);
+            // 广播均来自本应用自身，声明 NOT_EXPORTED 兼容 Android 13+
+            ContextCompat.registerReceiver(this, uiReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
+            receiverRegistered = true; // 幂等：避免极端时序下重复注册/重复注销导致崩溃
+        }
+        // 打开/回到前台：刷新家庭列表与左右滑动提示
+        loadFamilyIds();
         // 打开/回到前台：查询当前响铃状态，若正在响铃则显示「关闭响铃」按钮，避免不知如何关闭
         sendToService(AppConfig.ACTION_QUERY_RING);
         // 打开/回到前台：若在多人家庭，列出成员后自动向全员请求一次实时位置（底部 toast 提示，不弹窗）
@@ -579,15 +602,420 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         mapView.onPause();
-        unregisterReceiver(uiReceiver);
+        if (receiverRegistered) {
+            try {
+                unregisterReceiver(uiReceiver);
+            } catch (Exception ignored) {
+            }
+            receiverRegistered = false;
+        }
         stopHealthPolling();
         stopPeriodicRefresh();
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        // 交给地图保存相机状态（切后台/旋转回来视野不重置）
+        mapView.onSaveInstanceState(outState);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
     protected void onDestroy() {
         mapView.onDestroy();
         super.onDestroy();
+    }
+
+    // ---------------- 多家庭：用按钮切换（不再用左右滑动） ----------------
+
+    /** 本机已加入的家庭 ID 列表（与 Prefs 同步） */
+    private final java.util.List<String> familyIds = new java.util.ArrayList<>();
+    /** 正在切换家庭（避免重复触发） */
+    private boolean switchingFamily;
+    /**
+     * 家庭切换代号：每次切换/解散/被移出都自增。
+     * 用来丢弃「上一个家庭」迟到的成员列表/位置广播响应，
+     * 否则切到第二个家庭后，第一个家庭的刷新结果会串进来（历史 bug）。
+     */
+    private int familyGeneration;
+    private Button btnSwitchFamily;
+
+    /** 从本地记录同步家庭列表（并在需要时与服务器核对） */
+    private void loadFamilyIds() {
+        familyIds.clear();
+        familyIds.addAll(Prefs.get(this).familyIds());
+        String active = Prefs.get(this).familyId();
+        if (active != null && !active.isEmpty() && !familyIds.contains(active)) {
+            familyIds.add(0, active);
+            Prefs.get(this).familyIds(familyIds);
+        }
+        updateFamilySwitchButton();
+        updateFamilyTitle();
+    }
+
+    /** 当前家庭在家庭列表中的下标（不在列表返回 -1） */
+    private int activeFamilyIndex() {
+        String active = Prefs.get(this).familyId();
+        return familyIds.indexOf(active);
+    }
+
+    /** 标题栏只显示「当前家庭名 · 家庭成员」（不再显示第几个/共几个的数字编号） */
+    private void updateFamilyTitle() {
+        TextView tvTitle = findViewById(R.id.tvTitle);
+        if (tvTitle == null) {
+            return;
+        }
+        if (familyIds.size() <= 1) {
+            tvTitle.setText(R.string.title_family_share);
+            return;
+        }
+        tvTitle.setText(getString(R.string.title_family_name, currentFamilyName()));
+    }
+
+    /** 当前家庭显示名：优先家庭码，其次「家庭」 */
+    private String currentFamilyName() {
+        String code = Prefs.get(this).familyCodeOf(Prefs.get(this).familyId());
+        return code.isEmpty() ? getString(R.string.title_family_short) : code;
+    }
+
+    /** 「切换家庭」按钮：只有一个家庭时也显示（用于新增家庭） */
+    private void updateFamilySwitchButton() {
+        if (btnSwitchFamily == null) {
+            return;
+        }
+        btnSwitchFamily.setVisibility(Prefs.get(this).familyId().isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    /**
+     * 切换家庭弹窗：列出所有已加入的家庭供选择（不会退出任何家庭）。
+     * 打开时**先从服务器拉取真实家庭列表**（/api/family/my），避免本地记录不同步导致"没有家庭可选"；
+     * 列表用手工构建的视图，不依赖 AlertDialog.setItems。
+     */
+    private void showSwitchFamilyDialog() {
+        Prefs prefs = Prefs.get(this);
+        if (prefs.familyId().isEmpty()) {
+            showFamilySetup();
+            return;
+        }
+        if (!safeUi()) {
+            return;
+        }
+        final AlertDialog[] holder = new AlertDialog[1];
+        final LinearLayout listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        listBox.setPadding(dp(8), dp(4), dp(8), dp(4));
+
+        TextView loading = new TextView(this);
+        loading.setText(R.string.toast_loading);
+        loading.setPadding(dp(12), dp(16), dp(12), dp(16));
+        loading.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+        listBox.addView(loading);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(listBox);
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.dialog_switch_family_title)
+                .setView(scroll)
+                .setNegativeButton(R.string.btn_back, null)
+                .create();
+        holder[0] = dialog;
+        dialog.show();
+
+        Api.myFamilies(myDeviceId, new Api.Callback() {
+            @Override
+            public void onSuccess(String body) {
+                runOnUiThread(() -> {
+                    java.util.List<String> ids = new ArrayList<>();
+                    java.util.List<String> labels = new ArrayList<>();
+                    java.util.List<Boolean> ownerFlags = new ArrayList<>();
+                    try {
+                        org.json.JSONArray arr = new org.json.JSONArray(body);
+                        for (int i = 0; i < arr.length(); i++) {
+                            org.json.JSONObject o = arr.getJSONObject(i);
+                            String fid = o.optString("familyId");
+                            if (fid.isEmpty()) {
+                                continue;
+                            }
+                            ids.add(fid);
+                            String code = o.optString("code");
+                            if (code.isEmpty()) {
+                                code = prefs.familyCodeOf(fid);
+                            }
+                            int members = o.optInt("memberCount", 0);
+                            labels.add((code.isEmpty() ? getString(R.string.title_family_short) : code)
+                                    + (members > 0 ? "（" + members + getString(R.string.family_member_unit) + "）" : ""));
+                            ownerFlags.add(o.optBoolean("isOwner", false));
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    if (ids.isEmpty()) {
+                        // 服务器没返回就把本地记录兜底显示出来
+                        for (String fid : prefs.familyIds()) {
+                            ids.add(fid);
+                            String code = prefs.familyCodeOf(fid);
+                            labels.add(code.isEmpty() ? getString(R.string.title_family_short) : code);
+                            ownerFlags.add(fid.equals(prefs.familyId()) && prefs.isOwner());
+                        }
+                    }
+                    listBox.removeAllViews();
+                    if (ids.isEmpty()) {
+                        // 确实没有家庭：引导创建/加入
+                        TextView tv = new TextView(MainActivity.this);
+                        tv.setText(R.string.dialog_add_family_hint);
+                        tv.setPadding(dp(12), dp(12), dp(12), dp(12));
+                        tv.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.text_secondary));
+                        tv.setTextSize(13f);
+                        listBox.addView(tv);
+                        return;
+                    }
+                    // 与服务器对齐本地家庭列表
+                    prefs.familyIds(ids);
+                    familyIds.clear();
+                    familyIds.addAll(ids);
+                    updateFamilyTitle();
+                    updateFamilySwitchButton();
+
+                    final String activeId = prefs.familyId();
+                    for (int i = 0; i < ids.size(); i++) {
+                        final String fid = ids.get(i);
+                        boolean isActive = fid.equals(activeId);
+                        StringBuilder sb = new StringBuilder();
+                        if (isActive) {
+                            sb.append("✓ ");
+                        }
+                        sb.append(labels.get(i));
+                        if (ownerFlags.get(i)) {
+                            sb.append("  ").append(getString(R.string.owner_badge));
+                        }
+                        if (isActive) {
+                            sb.append("  ").append(getString(R.string.family_current));
+                        }
+                        TextView row = new TextView(MainActivity.this);
+                        row.setText(sb.toString());
+                        row.setTextSize(15f);
+                        row.setPadding(dp(14), dp(14), dp(14), dp(14));
+                        row.setTextColor(ContextCompat.getColor(MainActivity.this,
+                                isActive ? R.color.primary : R.color.text_primary));
+                        row.setBackground(ContextCompat.getDrawable(MainActivity.this, R.drawable.bg_menu_card));
+                        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                        rlp.setMargins(dp(4), dp(4), dp(4), dp(4));
+                        row.setLayoutParams(rlp);
+                        row.setOnClickListener(v -> {
+                            if (holder[0] != null) {
+                                holder[0].dismiss();
+                            }
+                            if (!fid.equals(Prefs.get(MainActivity.this).familyId())) {
+                                switchToFamily(fid);
+                            }
+                        });
+                        listBox.addView(row);
+                    }
+                    // 底部：新建/加入一个家庭（不影响已加入的家庭）
+                    TextView add = new TextView(MainActivity.this);
+                    add.setText(getString(R.string.dialog_add_family_ok));
+                    add.setTextSize(15f);
+                    add.setPadding(dp(14), dp(14), dp(14), dp(14));
+                    add.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.primary));
+                    LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    alp.setMargins(dp(4), dp(6), dp(4), dp(4));
+                    add.setLayoutParams(alp);
+                    add.setOnClickListener(v -> {
+                        if (holder[0] != null) {
+                            holder[0].dismiss();
+                        }
+                        showFamilySetup();
+                    });
+                    listBox.addView(add);
+                });
+            }
+
+            @Override
+            public void onError(String msg) {
+                runOnUiThread(() -> {
+                    if (holder[0] != null) {
+                        holder[0].dismiss();
+                    }
+                    toast(getString(R.string.toast_network_error, msg));
+                });
+            }
+        });
+    }
+
+    /** 切换到指定家庭（只切换当前查看的家庭，不退出任何家庭） */
+    private void switchToFamily(String targetFamilyId) {
+        if (targetFamilyId == null || targetFamilyId.isEmpty() || switchingFamily) {
+            return;
+        }
+        if (targetFamilyId.equals(Prefs.get(this).familyId())) {
+            return;
+        }
+        switchingFamily = true;
+        // 家庭代号 +1：让上一个家庭迟到的网络/广播响应失效（避免数据串台）
+        familyGeneration++;
+        Prefs.get(this).familyId(targetFamilyId);   // 只改「当前家庭」，不动家庭列表
+        // 收尾：清理当前视图状态（成员、标点、轨迹），避免显示上一个家庭的人
+        members.clear();
+        for (String id : new ArrayList<>(markers.keySet())) {
+            Marker mk = markers.remove(id);
+            if (mk != null) {
+                mk.remove();
+            }
+            removeAccuracyCircle(id);
+        }
+        iconCache.clear();
+        for (Polyline p : trackLines.values()) {
+            p.remove();
+        }
+        trackLines.clear();
+        for (Marker mk : trackStartMarkers.values()) {
+            if (mk != null) {
+                mk.remove();
+            }
+        }
+        trackStartMarkers.clear();
+        refreshAdapter();
+        closeDetail();
+        final int gen = familyGeneration;
+        bottomPanel.animate().alpha(0.25f).setDuration(120).withEndAction(() -> {
+            if (gen != familyGeneration) {
+                switchingFamily = false;
+                return; // 期间又切换了，放弃本次收尾
+            }
+            sendToService(AppConfig.ACTION_RECONNECT);
+            loadMembers();
+            updateFamilyTitle();
+            updateFamilySwitchButton();
+            bottomPanel.animate().alpha(1f).setDuration(180)
+                    .withEndAction(() -> switchingFamily = false).start();
+            toastTop(getString(R.string.toast_family_switched, currentFamilyName()));
+        }).start();
+    }
+
+    /** 该响应是否仍属于「当前查看的家庭」（家庭切换后丢弃上一个家庭的迟到数据） */
+    private boolean isCurrentFamily(String familyId, int generation) {
+        return generation == familyGeneration
+                && familyId != null
+                && familyId.equals(Prefs.get(this).familyId());
+    }
+
+    /**
+     * 当前家庭被解散（自己解散或被群主解散）：从本地家庭列表移除该家庭；
+     * 若还有其它家庭则自动切到下一个，否则回到「创建/加入家庭」引导。
+     */
+    private void onFamilyDisbanded(String familyId) {
+        if (familyId == null || familyId.isEmpty()) {
+            return;
+        }
+        Prefs prefs = Prefs.get(this);
+        String name = prefs.familyCodeOf(familyId);
+        boolean wasActive = familyId.equals(prefs.familyId());
+        prefs.removeFamily(familyId);
+        // 家庭代号 +1：丢弃该家庭迟到的响应，避免和现在显示的家庭串台
+        familyGeneration++;
+        loadFamilyIds();
+        if (!wasActive) {
+            updateFamilySwitchButton();
+            return; // 被解散的不是当前查看的家庭，只需把它从列表里去掉
+        }
+        toastTop(getString(R.string.toast_family_disbanded,
+                name.isEmpty() ? getString(R.string.title_family_short) : name));
+        if (prefs.familyId().isEmpty()) {
+            // 没有其它家庭了：停止共享并引导重新创建/加入
+            prefs.shareEnabled(false);
+            sendToService(AppConfig.ACTION_STOP);
+            members.clear();
+            for (String id : new ArrayList<>(markers.keySet())) {
+                Marker mk = markers.remove(id);
+                if (mk != null) {
+                    mk.remove();
+                }
+                removeAccuracyCircle(id);
+            }
+            iconCache.clear();
+            trackLines.clear();
+            trackStartMarkers.clear();
+            refreshAdapter();
+            closeDetail();
+            updateFamilyTitle();
+            updateFamilySwitchButton();
+            toast(getString(R.string.toast_last_family_disbanded));
+            showFamilySetup();
+        } else {
+            // 自动切到另一个家庭
+            switchingFamily = false;
+            switchToFamily(prefs.familyId());
+        }
+    }
+
+    /** 群主一键解散当前家庭（二次确认） */
+    private void showDisbandFamilyDialog() {
+        Prefs prefs = Prefs.get(this);
+        if (prefs.familyId().isEmpty() || !prefs.isOwner()) {
+            return;
+        }
+        String code = prefs.familyCodeOf(prefs.familyId());
+        String extra = code.isEmpty() ? "" : ("\n\n家庭码：" + code);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.dialog_disband_title)
+                .setMessage(getString(R.string.dialog_disband_message) + extra)
+                .setPositiveButton(R.string.dialog_disband_ok, (d, w) -> disbandCurrentFamily())
+                .setNegativeButton(R.string.btn_back, null)
+                .show();
+    }
+
+    private void disbandCurrentFamily() {
+        final String familyId = Prefs.get(this).familyId();
+        if (familyId.isEmpty()) {
+            return;
+        }
+        Api.disbandFamily(familyId, myDeviceId, new Api.Callback() {
+            @Override
+            public void onSuccess(String body) {
+                runOnUiThread(() -> {
+                    toast(getString(R.string.toast_disband_done));
+                    onFamilyDisbanded(familyId);
+                });
+            }
+
+            @Override
+            public void onError(String msg) {
+                runOnUiThread(() -> toast(getString(R.string.toast_network_error, msg)));
+            }
+        });
+    }
+
+    /** 面板与刻度尺相关 View 是否都已就绪（未就绪前不要做刻度尺/面板计算） */
+    private boolean panelViewsReady() {
+        return bottomPanel != null && panelBody != null && panelHeader != null
+                && scaleBar != null && tvScaleText != null && scaleLine != null;
+    }
+
+    /**
+     * 面板/刻度尺初始化：必须在所有 View findViewById 完成后再执行
+     * （否则 panelFullHeight() 会用到还是 null 的 bottomPanel）。
+     */
+    private void postPanelReadyInit() {
+        if (!mapReady || aMap == null || !panelViewsReady()) {
+            return;
+        }
+        mapView.post(() -> {
+            if (!panelViewsReady()) {
+                return;
+            }
+            initScaleBar(); // 自绘刻度尺（注册相机监听 + 首次定位）
+            refreshMarkerStyleIfNeeded(currentZoom());
+            for (Member m : members.values()) {
+                updateMarker(m);
+            }
+            updateTrackLines(new ArrayList<>(members.values()));
+            updateScaleBarPosition();
+            if (!members.isEmpty()) {
+                fitCameraToMembers();
+            }
+            scheduleMapRelayout();
+        });
     }
 
     // ---------------- 成员与地图 ----------------
@@ -629,26 +1057,71 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** 标点锚点：底边中点（与卡片左右中心、圆角中心一致），保证标点左右不偏 */
+    private static final float MARKER_ANCHOR_U = 0.5f;
+    /** 标点锚点：位图底边（= 尾巴尖端，位图最后一行就是尾尖所在行） */
+    private static final float MARKER_ANCHOR_V = 1f;
+
+    /**
+     * 标点样式：地图放大时用完整卡片（头像 + 昵称），缩小时折叠成小圆点。
+     * 缩小后标点与文字密集，卡片会互相压字、看不清位置，折叠成圆点后视野干净、位置也更准。
+     */
+    private boolean markerDotMode;
+    /** 样式切换的缩放阈值：低于该级别折叠为圆点，高于则展开为卡片（留 0.25 级迟滞，避免边界抖动） */
+    private static final float DOT_MODE_ZOOM = 13f;
+    /** 缩放低于该级别时不画精度圈（圈会连成一片，反而看不清人员分布） */
+    private static final float ACCURACY_CIRCLE_MIN_ZOOM = 14f;
+
+    /** 地图容器尺寸快照：用于发现 WebView 容器尺寸与实际渲染尺寸不一致（会让底图标注层按错误比例移动） */
+    private int mapLastW;
+    private int mapLastH;
+
+    /**
+     * 地图容器尺寸对齐（轻量版 WebView 渲染时的兜底）。
+     * 用完整版原生 3D SDK 时不需要、也不该做：给 MapView 重新 setLayoutParams 会触发 GL 表面重建，
+     * 而地图的原生 GL 线程对这种重建很敏感（可能直接 SIGABRT 崩溃）。
+     * 因此这里只在容器尺寸真的从 0 变成有效值时做一次「请求重新布局」，不再改 LayoutParams。
+     */
+    private void scheduleMapRelayout() {
+        if (mapView == null) {
+            return;
+        }
+        mapView.post(() -> {
+            if (mapView == null || mapView.getWidth() <= 0 || mapView.getHeight() <= 0) {
+                return;
+            }
+            if (mapView.getWidth() == mapLastW && mapView.getHeight() == mapLastH) {
+                return;
+            }
+            mapLastW = mapView.getWidth();
+            mapLastH = mapView.getHeight();
+            // 只请求重新布局，不做 setLayoutParams（避免重建 GL 表面）
+            mapView.requestLayout();
+        });
+    }
+
     private void updateMarker(Member m) {
         if (!mapReady || aMap == null) {
-            return; // 地图未就绪（轻量版地图异步就绪）：就绪后由 getMapAsyn 回调统一补画
+            return; // 地图未就绪：就绪后统一补画
         }
         if (!m.hasLocation) {
             removeAccuracyCircle(m.deviceId);
             return;
         }
-        BitmapDescriptor icon = buildMemberIcon(m);
+        BitmapDescriptor icon = memberIcon(m);
         Marker marker = markers.get(m.deviceId);
         if (marker == null) {
             MarkerOptions opt = new MarkerOptions()
                     .position(new LatLng(m.lat, m.lng))
                     .icon(icon)
                     .title(m.name)
-                    .anchor(0.5f, 1f);
+                    .anchor(MARKER_ANCHOR_U, MARKER_ANCHOR_V);
             marker = aMap.addMarker(opt);
             markers.put(m.deviceId, marker);
         } else {
             marker.setIcon(icon);
+            // 位图尺寸可能因昵称长度/样式切换变化，锚点按比例重新对齐到「底边中点」
+            marker.setAnchor(MARKER_ANCHOR_U, MARKER_ANCHOR_V);
             marker.setPosition(new LatLng(m.lat, m.lng));
         }
         marker.setTitle(m.name);
@@ -656,8 +1129,183 @@ public class MainActivity extends AppCompatActivity {
         updateAccuracyCircle(m);
     }
 
-    /** 扁平风标点：成员颜色圆角卡片 + 头像/首字 + 名字 + 底部三角尾巴（锚点=尾尖） */
+    /**
+     * 缩放变化后刷新标点样式（卡片 <-> 圆点）与精度圈显隐。
+     * 仅在跨越阈值时重建图标，避免每帧重绘。
+     */
+    private void refreshMarkerStyleIfNeeded(float zoom) {
+        // 阈值带迟滞：折叠用 12.75、展开用 13.0，避免正好停在阈值上时反复重建全部图标
+        float threshold = markerDotMode ? DOT_MODE_ZOOM - 0.25f : DOT_MODE_ZOOM;
+        boolean dot = zoom < threshold;
+        if (dot != markerDotMode) {
+            markerDotMode = dot;
+            iconCache.clear(); // 样式变了：图标需要按新样式重建
+            for (Member m : members.values()) {
+                updateMarker(m);
+            }
+        }
+        // 精度圈：缩得太小时隐藏（否则多个圈叠在一起糊成一片）
+        for (String id : new ArrayList<>(accuracyCircles.keySet())) {
+            Circle c = accuracyCircles.get(id);
+            if (c != null) {
+                c.setVisible(zoom >= ACCURACY_CIRCLE_MIN_ZOOM);
+            }
+        }
+    }
+
+    /**
+     * 取成员标点图标（带缓存）：昵称/头像/是否本机/标点样式不变时复用同一张位图。
+     * 位置刷新非常频繁，而图标内容与位置无关，缓存可避免重复生成位图与 PNG 编码。
+     */
+    private BitmapDescriptor memberIcon(Member m) {
+        String name = (m.name == null || m.name.isEmpty()) ? "?" : m.name;
+        String avatar = m.avatar == null ? "" : m.avatar;
+        String key = name + "\u0000" + avatar + "\u0000" + m.deviceId.equals(myDeviceId)
+                + "\u0000" + markerDotMode;
+        MemberIcon cached = iconCache.get(m.deviceId);
+        if (cached != null && cached.key.equals(key)) {
+            return cached.descriptor;
+        }
+        BitmapDescriptor descriptor = buildMemberIcon(m);
+        iconCache.put(m.deviceId, new MemberIcon(key, descriptor));
+        // 注意：旧图标可能仍被地图上的旧帧引用，此处不主动 recycle，交由 GC/地图管理，避免闪白或崩溃
+        return descriptor;
+    }
+
+    /**
+     * 头像更新后强制重绘标点：清掉图标缓存、已解码头像缓存与下载缓存。
+     * 头像 URL 通常固定为 icons/&lt;deviceId&gt;.jpg（内容变了但地址没变），只比对 URL 无法发现更新。
+     */
+    private void invalidateMemberIconAndAvatar(String deviceId) {
+        iconCache.remove(deviceId);
+        Member cur = members.get(deviceId);
+        if (cur != null) {
+            if (cur.avatar != null && !cur.avatar.isEmpty()) {
+                AvatarLoader.evict(cur.avatar);
+            }
+            cur.avatarBitmap = null;
+            cur.avatarBitmapFor = null;
+        }
+    }
+
+    /** 成员标点颜色：本机为品牌色，其他成员按其 deviceId 稳定取色 */
+    private int memberColor(Member m) {
+        return m.deviceId.equals(myDeviceId) ? MemberColors.selfColor() : MemberColors.colorFor(m.deviceId);
+    }
+
+    /**
+     * 生成成员标点图标：
+     * - 放大时（markerDotMode=false）：成员颜色圆角卡片 + 头像/首字 + 名字 + 底部三角尾巴；
+     * - 缩小时（markerDotMode=true） ：小圆点（团队色描边 + 头像/首字）+ 名字小标签。
+     * 两种样式都保持「锚点 = 位图底边中点」，且位图宽高都是 density 的整数倍，位置不会漂。
+     */
     private BitmapDescriptor buildMemberIcon(Member m) {
+        return markerDotMode ? buildMemberDotIcon(m) : buildMemberCardIcon(m);
+    }
+
+    /** 位图宽高对齐到屏幕密度的整数倍，保证网页侧尺寸/偏移都是整数（见下方 buildMemberCardIcon 注释） */
+    private static void alignToDensity(int[] wh, float density) {
+        int step = Math.max(1, Math.round(density));
+        for (int i = 0; i < wh.length; i++) {
+            if (wh[i] % step != 0) {
+                wh[i] += step - (wh[i] % step);
+            }
+        }
+    }
+
+    /** 把头像（或首字）画到圆形区域内，带白色描边环 */
+    private void drawAvatarCircle(android.graphics.Canvas c, Member m, int color,
+                                  float cx, float cy, float radius, float density) {
+        String name = (m.name == null || m.name.isEmpty()) ? "?" : m.name;
+        int size = Math.round(radius * 2);
+        // 描边环（外圈团队色 + 内圈白），在浅色底图上也能与地图区分开
+        android.graphics.Paint ring = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        ring.setStyle(android.graphics.Paint.Style.STROKE);
+        ring.setStrokeWidth(Math.max(1.5f, 2f * density));
+        ring.setColor(color);
+        c.drawCircle(cx, cy, radius - ring.getStrokeWidth() / 2f, ring);
+        android.graphics.Paint white = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        white.setColor(android.graphics.Color.WHITE);
+        c.drawCircle(cx, cy, radius - ring.getStrokeWidth(), white);
+
+        Bitmap av = m.avatarBitmap;
+        float inner = radius - ring.getStrokeWidth() * 1.5f;
+        if (av != null && m.avatar != null && m.avatar.equals(m.avatarBitmapFor)) {
+            android.graphics.Path circleClip = new android.graphics.Path();
+            circleClip.addCircle(cx, cy, inner, android.graphics.Path.Direction.CW);
+            int sc = c.save();
+            c.clipPath(circleClip);
+            c.drawBitmap(Bitmap.createScaledBitmap(av, size, size, true), cx - size / 2f, cy - size / 2f, null);
+            c.restoreToCount(sc);
+        } else {
+            android.graphics.Paint ip = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            ip.setColor(color);
+            ip.setTextSize(inner * 1.1f);
+            ip.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            ip.setTextAlign(android.graphics.Paint.Align.CENTER);
+            float ib = cy - (ip.descent() + ip.ascent()) / 2f;
+            c.drawText(name.substring(0, 1), cx, ib, ip);
+        }
+    }
+
+    /**
+     * 缩小地图时的标点样式：名字小标签 + 小圆点（头像/首字）。
+     * 布局从上到下为「名字标签 → 间距 → 圆点」，圆点底边与位图底边对齐，
+     * 因此锚点(0.5, 1) 正好落在圆点底部中心 —— 与卡片模式的尾尖压点方式一致，
+     * 缩放切换样式时标点相对坐标点的位置关系不会发生变化。
+     */
+    private BitmapDescriptor buildMemberDotIcon(Member m) {
+        float d = getResources().getDisplayMetrics().density;
+        int nameSize = Math.round(10 * d);
+        int dotR = Math.round(11 * d);          // 圆点半径
+        int dotPad = Math.round(3 * d);         // 标签与圆点之间的间距
+        int labelPadH = Math.round(5 * d);
+        int labelH = Math.round(nameSize + 5 * d);
+        int maxNameW = Math.round(64 * d);
+        int color = memberColor(m);
+        String name = (m.name == null || m.name.isEmpty()) ? "?" : m.name;
+
+        android.text.TextPaint tp = new android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        tp.setTextSize(nameSize);
+        tp.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        tp.setColor(android.graphics.Color.WHITE);
+        tp.setTextAlign(android.graphics.Paint.Align.LEFT);
+        String shownName = tp.measureText(name) > maxNameW
+                ? android.text.TextUtils.ellipsize(name, tp, maxNameW, android.text.TextUtils.TruncateAt.END).toString()
+                : name;
+        int textW = (int) Math.ceil(tp.measureText(shownName));
+
+        int labelW = labelPadH * 2 + textW;
+        int totalW = Math.max(dotR * 2 + Math.round(6 * d), labelW);
+        int totalH = labelH + dotPad + dotR * 2;   // 标签在上、圆点在下（圆点贴位图底边）
+        int[] wh = {totalW, totalH};
+        alignToDensity(wh, d);
+        totalW = wh[0];
+        totalH = wh[1];
+
+        Bitmap bmp = Bitmap.createBitmap(totalW, totalH, Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas c = new android.graphics.Canvas(bmp);
+
+        // 圆点：底边与位图底边对齐（画布内 y 轴向下，圆心 = totalH - dotR）
+        float dotCy = totalH - dotR;
+        drawAvatarCircle(c, m, color, totalW / 2f, dotCy, dotR, d);
+
+        // 名字标签（深色圆角底 + 白字），帮助在低缩放下仍能分辨是谁
+        float labelTop = 0f;
+        android.graphics.Paint label = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        label.setColor(0xCC1A1A2E);
+        float lr = labelH / 2f;
+        c.drawRoundRect((totalW - labelW) / 2f, labelTop, (totalW + labelW) / 2f, labelTop + labelH, lr, lr, label);
+        float tb = labelTop + labelH / 2f - (tp.descent() + tp.ascent()) / 2f;
+        c.drawText(shownName, (totalW - textW) / 2f, tb, tp);
+        return BitmapDescriptorFactory.fromBitmap(bmp);
+    }
+
+    /**
+     * 放大时的标点样式：成员颜色圆角卡片 + 头像/首字 + 名字 + 底部三角尾巴。
+     * 锚点 = 位图底边中点（尾尖位于最后一行，正好压在定位点上）。
+     */
+    private BitmapDescriptor buildMemberCardIcon(Member m) {
         float d = getResources().getDisplayMetrics().density;
         int avatarSize = Math.round(30 * d);
         int pad = Math.round(6 * d);
@@ -665,8 +1313,7 @@ public class MainActivity extends AppCompatActivity {
         int tailH = Math.round(9 * d);
         int nameSize = Math.round(12 * d);
         int maxNameW = Math.round(96 * d);
-        boolean self = m.deviceId.equals(myDeviceId);
-        int color = self ? MemberColors.selfColor() : MemberColors.colorFor(m.deviceId);
+        int color = memberColor(m);
 
         android.text.TextPaint tp = new android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG);
         tp.setTextSize(nameSize);
@@ -685,52 +1332,43 @@ public class MainActivity extends AppCompatActivity {
         int totalW = cardW;
         int totalH = cardH + tailH;
 
+        // 位图尺寸对齐到屏幕密度的整数倍：
+        // 轻量版地图SDK 用「位图像素 / density」作为网页里的图标尺寸与偏移量（AMap.Icon size/offset），
+        // 若位图宽高不能被 density 整除（如 2.625/2.75 等非整数密度、或计算出的奇数宽高），
+        // 网页侧尺寸与偏移会各自取整，标点（含其中的名字文字）就会相对真实经纬度产生几个像素的偏移，
+        // 缩小地图时标点与文字更密集，偏移会非常明显。按 density 取整后，尺寸与偏移都是整数，不再错位。
+        int[] wh = {totalW, totalH};
+        alignToDensity(wh, d);
+        totalW = wh[0];
+        totalH = wh[1];
+
         Bitmap bmp = Bitmap.createBitmap(totalW, totalH, Bitmap.Config.ARGB_8888);
         android.graphics.Canvas c = new android.graphics.Canvas(bmp);
 
+        // 卡片（垂直居中：上下留白与放大后的位图居中，尾尖仍在最后一行正中）
+        float cardTop = (totalH - tailH - cardH) / 2f;
+        float cardBottom = cardTop + cardH;
         android.graphics.Paint cardPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
         cardPaint.setColor(color);
         float radius = 9 * d;
-        c.drawRoundRect(0, 0, cardW, cardH, radius, radius, cardPaint);
+        c.drawRoundRect(0, cardTop, cardW, cardBottom, radius, radius, cardPaint);
 
         // 头像（白色圆底 + 头像/首字）
         float circleR = avatarSize / 2f;
-        float cx = pad + circleR, cy = pad + circleR;
-        android.graphics.Paint white = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-        white.setColor(android.graphics.Color.WHITE);
-        c.drawCircle(cx, cy, circleR, white);
-        Bitmap av = m.avatarBitmap;
-        if (av != null && m.avatar != null && m.avatar.equals(m.avatarBitmapFor)) {
-            float inner = circleR - 1.5f * d;
-            android.graphics.Path circleClip = new android.graphics.Path();
-            circleClip.addCircle(cx, cy, inner, android.graphics.Path.Direction.CW);
-            int sc = c.save();
-            c.clipPath(circleClip);
-            c.drawBitmap(Bitmap.createScaledBitmap(av, avatarSize, avatarSize, true),
-                    cx - avatarSize / 2f, cy - avatarSize / 2f, null);
-            c.restoreToCount(sc);
-        } else {
-            String initial = name.substring(0, 1);
-            android.graphics.Paint ip = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-            ip.setColor(color);
-            ip.setTextSize(avatarSize * 0.55f);
-            ip.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            ip.setTextAlign(android.graphics.Paint.Align.CENTER);
-            float ib = cy - (ip.descent() + ip.ascent()) / 2f;
-            c.drawText(initial, cx, ib, ip);
-        }
+        float cx = pad + circleR, cy = cardTop + pad + circleR;
+        drawAvatarCircle(c, m, color, cx, cy, circleR, d);
 
         // 名字
         float tx = pad + avatarSize + gap;
-        float tb = cardH / 2f - (tp.descent() + tp.ascent()) / 2f;
+        float tb = cardTop + cardH / 2f - (tp.descent() + tp.ascent()) / 2f;
         c.drawText(shownName, tx, tb, tp);
 
-        // 底部三角尾巴（指向定位点）
+        // 底部三角尾巴（指向定位点：尾尖落在最后一行，配合 anchor(0.5, 1) 精确压点）
         android.graphics.Path tail = new android.graphics.Path();
-        float tcx = cardW / 2f, tw = 8 * d;
-        tail.moveTo(tcx - tw, cardH);
-        tail.lineTo(tcx + tw, cardH);
-        tail.lineTo(tcx, cardH + tailH);
+        float tcx = totalW / 2f, tw = 8 * d;
+        tail.moveTo(tcx - tw, cardBottom);
+        tail.lineTo(tcx + tw, cardBottom);
+        tail.lineTo(tcx, totalH);
         tail.close();
         c.drawPath(tail, cardPaint);
 
@@ -776,6 +1414,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         LatLng center = new LatLng(m.lat, m.lng);
+        boolean show = currentZoom() >= ACCURACY_CIRCLE_MIN_ZOOM;
         Circle circle = accuracyCircles.get(m.deviceId);
         if (circle == null) {
             circle = aMap.addCircle(new CircleOptions()
@@ -788,6 +1427,20 @@ public class MainActivity extends AppCompatActivity {
         } else {
             circle.setCenter(center);
             circle.setRadius(radius);
+        }
+        circle.setVisible(show);
+    }
+
+    /** 当前地图缩放级别（地图未就绪时返回 0，等价于「很小」） */
+    private float currentZoom() {
+        if (!mapReady || aMap == null) {
+            return 0f;
+        }
+        try {
+            CameraPosition cam = aMap.getCameraPosition();
+            return cam == null ? 0f : cam.zoom;
+        } catch (Exception e) {
+            return 0f;
         }
     }
 
@@ -803,10 +1456,15 @@ public class MainActivity extends AppCompatActivity {
         if (familyId.isEmpty()) {
             return;
         }
+        final int gen = familyGeneration;
         Api.listMembers(familyId, new Api.Callback() {
             @Override
             public void onSuccess(String body) {
                 runOnUiThread(() -> {
+                    // 家庭已切换/解散：丢弃上一个家庭的迟到响应，避免"第一个家庭的人出现在第二个家庭"
+                    if (!isCurrentFamily(familyId, gen)) {
+                        return;
+                    }
                     try {
                         applyMemberList(Member.listFromJson(body), true);
                     } catch (Exception e) {
@@ -817,7 +1475,12 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onError(String msg) {
-                runOnUiThread(() -> toast(getString(R.string.toast_network_error, msg)));
+                runOnUiThread(() -> {
+                    if (!isCurrentFamily(familyId, gen)) {
+                        return;
+                    }
+                    toast(getString(R.string.toast_network_error, msg));
+                });
             }
         });
     }
@@ -914,14 +1577,24 @@ public class MainActivity extends AppCompatActivity {
             if (!keep.contains(m.deviceId)) {
                 continue;
             }
+            int baseColor = MemberColors.colorFor(m.deviceId);
+            List<Integer> colors = trackGradientColors(baseColor, m.trajectory.size());
             Polyline p = trackLines.get(m.deviceId);
             if (p != null) {
                 p.setPoints(m.trajectory);
+                // 逐点颜色（旧点淡、新点亮，方向一目了然）。轻量版 SDK 的 Polyline 没有
+                // setColorValues，但 setColor/setPoints 都是改 options 后重建，这里同样处理。
+                PolylineOptions opts = p.getOptions();
+                if (opts != null) {
+                    opts.colorValues(colors);
+                    p.setOptions(opts);
+                }
             } else {
                 p = aMap.addPolyline(new PolylineOptions()
                         .addAll(m.trajectory)
                         .width(5)
-                        .color(MemberColors.colorFor(m.deviceId)));
+                        .color(baseColor)
+                        .colorValues(colors));
                 trackLines.put(m.deviceId, p);
             }
             updateTrackStart(m);
@@ -930,6 +1603,27 @@ public class MainActivity extends AppCompatActivity {
         if (highlightDeviceId != null && !highlightDeviceId.isEmpty() && isDetailOpen()) {
             highlightTrack(highlightDeviceId);
         }
+    }
+
+    /**
+     * 轨迹线的渐变配色：整条线只取有限个色标（AMap 的 colorValues 是逐点颜色，
+     * 点数很多时全部生成会用大量内存/带宽），这里把点分段，旧的淡、新的亮。
+     */
+    private static List<Integer> trackGradientColors(int baseColor, int pointCount) {
+        List<Integer> out = new ArrayList<>();
+        if (pointCount <= 0) {
+            return out;
+        }
+        final int steps = Math.min(10, pointCount); // 色标数量上限
+        for (int i = 0; i < pointCount; i++) {
+            // 位置比例 0(最旧) -> 1(最新)
+            double ratio = pointCount == 1 ? 1.0 : (double) i / (pointCount - 1);
+            int step = (int) Math.floor(ratio * (steps - 1));
+            float alphaRatio = 0.30f + 0.70f * (steps == 1 ? 1f : (float) step / (steps - 1));
+            int alpha = Math.max(60, Math.min(255, Math.round(255 * alphaRatio)));
+            out.add((baseColor & 0x00FFFFFF) | (alpha << 24));
+        }
+        return out;
     }
 
     /** 添加/更新某成员轨迹的绿色起点标记（单独的一个绿点） */
@@ -994,6 +1688,7 @@ public class MainActivity extends AppCompatActivity {
             if (mk != null) {
                 mk.remove();
             }
+            iconCache.remove(id);
             removeAccuracyCircle(id);
         }
     }
@@ -1012,15 +1707,38 @@ public class MainActivity extends AppCompatActivity {
             tvMemberCount.setText(getString(R.string.member_count_title, count));
         }
         boolean empty = members.isEmpty();
-        tvEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
+        // 没有成员时用带「创建/加入家庭」按钮的引导卡片兜底（比一行灰字更容易上手）
+        if (emptyCard != null) {
+            emptyCard.setVisibility(empty ? View.VISIBLE : View.GONE);
+        }
+        tvEmpty.setVisibility(View.GONE); // 文案已由引导卡片承载
         memberList.setVisibility(empty ? View.GONE : View.VISIBLE);
         updateMemberListHeight();
+        updateMoreMembersHint();
+        updateFamilyTitle();
+        updateFamilySwitchButton();
     }
 
     /**
-     * 成员列表高度限制：最多同时显示 MAX_VISIBLE_MEMBERS 行；超过时固定为
-     * 「4 行 + 下一行露出一半」的高度，让第 5 个成员被裁掉一半露出来作为「还有更多」的滚动提示，
-     * 同时保持可上下滚动（并在「滚到顶部后继续下拉」时触发面板收起，见 memberList 的 onTouch 监听）。
+     * 列表被裁掉时，只在顶部/底部显示透明渐变（被裁掉的那半行自然淡出），
+     * 不再显示「还有 N 位家人」文字。
+     */
+    private void updateMoreMembersHint() {
+        if (listTopMore == null || listBottomMore == null || memberList == null) {
+            return;
+        }
+        if (memberList.getVisibility() != View.VISIBLE || memberList.getHeight() <= 0) {
+            listTopMore.setVisibility(View.GONE);
+            listBottomMore.setVisibility(View.GONE);
+            return;
+        }
+        listBottomMore.setVisibility(memberList.canScrollVertically(1) ? View.VISIBLE : View.GONE);
+        listTopMore.setVisibility(memberList.canScrollVertically(-1) ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * 成员列表高度限制：最多同时显示 MAX_VISIBLE_MEMBERS 行，并在底部多留出约半行的高度，
+     * 让下一个家人露出半个卡片（便于辨认是谁），配合底部透明渐变提示还能下滑。
      * 人数不足时用自然高度（wrap_content）。
      */
     private void updateMemberListHeight() {
@@ -1046,8 +1764,8 @@ public class MainActivity extends AppCompatActivity {
                     View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
             memberRowHeightPx = sample.getMeasuredHeight() > 0 ? sample.getMeasuredHeight() : dp(62);
         }
-        // 4 行完整高度 + 第 5 行露出一半（半行 peek）：既提示可滚动，也让底部始终有被裁一半的行
-        int targetH = memberRowHeightPx * MAX_VISIBLE_MEMBERS + memberRowHeightPx / 2;
+        // N 行完整高度 + 下一行露出约 40%（能看清昵称与头像，又明显是"被裁了一半"）
+        int targetH = Math.round(memberRowHeightPx * (MAX_VISIBLE_MEMBERS + 0.4f));
         if (lp.height != targetH) {
             lp.height = targetH;
             memberList.setLayoutParams(lp);
@@ -1059,20 +1777,36 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         LatLngBounds.Builder builder = LatLngBounds.builder();
-        boolean any = false;
+        int count = 0;
+        // 去重后的第一个点：仅 1 个定位点时不能用 newLatLngBounds
+        LatLng only = null;
         for (Member m : members.values()) {
             if (m.hasLocation) {
-                builder.include(new LatLng(m.lat, m.lng));
-                any = true;
+                LatLng p = new LatLng(m.lat, m.lng);
+                if (only == null || only.latitude != p.latitude || only.longitude != p.longitude) {
+                    count++;
+                }
+                if (only == null) {
+                    only = p;
+                }
+                builder.include(p);
             }
         }
-        if (!any && Prefs.get(this).hasLastLocation()) {
-            builder.include(new LatLng(Prefs.get(this).lastLat(), Prefs.get(this).lastLng()));
-            any = true;
+        if (count == 0 && Prefs.get(this).hasLastLocation()) {
+            only = new LatLng(Prefs.get(this).lastLat(), Prefs.get(this).lastLng());
+            builder.include(only);
+            count = 1;
         }
-        if (any) {
-            aMap.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 100));
+        if (count <= 0) {
+            return;
         }
+        // 只有 1 个（或全部重合的）定位点：LatLngBounds 退化为一个点，按边界适配在部分机型上会算出异常缩放，
+        // 这里直接按固定级别定位到该点，避免视野跳到奇怪的位置。
+        if (count == 1) {
+            aMap.animateCamera(CameraUpdateFactory.newLatLngZoom(only, 16f));
+            return;
+        }
+        aMap.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 100));
     }
 
     private void moveCamera(double lat, double lng) {
@@ -1183,6 +1917,7 @@ public class MainActivity extends AppCompatActivity {
         if (mk != null) {
             mk.remove();
         }
+        iconCache.remove(deviceId);
         removeAccuracyCircle(deviceId);
         Polyline pl = trackLines.remove(deviceId);
         if (pl != null) {
@@ -1192,15 +1927,17 @@ public class MainActivity extends AppCompatActivity {
         refreshAdapter();
     }
 
-    /** 本机被移出家庭：清理本地家庭状态，并引导重新创建/加入家庭 */
+    /**
+     * 本机被移出某个家庭：只把该家庭从本地列表移除；
+     * 若还属于其它家庭就自动切过去，否则停止共享并引导重新创建/加入。
+     */
     private void handleSelfRemoved() {
         Prefs prefs = Prefs.get(this);
-        prefs.familyId("");
-        prefs.familyCode("");
+        String removedFamilyId = prefs.familyId();
+        String removedName = prefs.familyCodeOf(removedFamilyId);
         prefs.isOwner(false);
-        prefs.shareEnabled(false);
-        prefs.offlineMode(false);
-        sendToService(AppConfig.ACTION_STOP);
+        prefs.removeFamily(removedFamilyId);
+        loadFamilyIds();
         closeDetail();
         members.clear();
         for (String id : new ArrayList<>(markers.keySet())) {
@@ -1210,6 +1947,7 @@ public class MainActivity extends AppCompatActivity {
             }
             removeAccuracyCircle(id);
         }
+        iconCache.clear();
         for (Polyline p : trackLines.values()) {
             p.remove();
         }
@@ -1222,8 +1960,20 @@ public class MainActivity extends AppCompatActivity {
         trackStartMarkers.clear();
         clearTrackHighlight();
         refreshAdapter();
-        toast(getString(R.string.toast_removed_self));
-        showFamilySetup();
+        toast(getString(R.string.toast_removed_from_family,
+                removedName.isEmpty() ? getString(R.string.title_family_short) : removedName));
+        if (prefs.familyId().isEmpty()) {
+            // 已不属于任何家庭：停止共享并引导重新创建/加入
+            prefs.shareEnabled(false);
+            prefs.offlineMode(false);
+            sendToService(AppConfig.ACTION_STOP);
+            updateFamilyTitle();
+            showFamilySetup();
+        } else {
+            // 还有其它家庭：自动切过去继续使用
+            switchingFamily = false;
+            switchToFamily(prefs.familyId());
+        }
     }
 
     /** 定位我：直接定位并显示自己的位置（带结果反馈，失败会提示原因） */
@@ -1478,15 +2228,16 @@ public class MainActivity extends AppCompatActivity {
         messages.add(new MessageItem("invite", "", fromName == null ? "家人" : fromName, "", code));
     }
 
-    /** 收到入群申请：存入消息中心（仅群主有审批按钮） */
+    /** 收到入群申请：存入消息中心（仅群主有审批按钮）。
+     *  已有同 requestId 的消息时直接忽略：服务器会在广播与「拉取待审批列表」两条路径上重复下发同一条申请，
+     *  重复添加会出现两条一样的申请（点两次、第二次必定失败）。 */
     private void addJoinRequestMessage(String requestId, String deviceId, String name) {
         if (requestId == null || requestId.isEmpty() || deviceId == null || deviceId.isEmpty()) {
             return;
         }
-        for (java.util.Iterator<MessageItem> it = messages.iterator(); it.hasNext(); ) {
-            MessageItem m = it.next();
+        for (MessageItem m : messages) {
             if ("joinRequest".equals(m.type) && requestId.equals(m.requestId)) {
-                it.remove();
+                return;
             }
         }
         messages.add(new MessageItem("joinRequest", deviceId, name == null ? "家人" : name, requestId, ""));
@@ -1788,10 +2539,11 @@ public class MainActivity extends AppCompatActivity {
                                 String familyId = o.optString("familyId");
                                 String code = o.optString("code");
                                 Prefs p = Prefs.get(MainActivity.this);
-                                p.familyId(familyId);
-                                p.familyCode(code);
+                                // 加入新家庭不退出原有家庭：记入家庭列表并切换为当前家庭
+                                p.addFamily(familyId, code);
                                 p.isOwner(false);
                                 p.shareEnabled(true);
+                                loadFamilyIds();
                                 sendToService(AppConfig.ACTION_RECONNECT);
                                 entryRefreshArmed = true;
                                 loadMembers();
@@ -1861,10 +2613,14 @@ public class MainActivity extends AppCompatActivity {
             if (familyId.isEmpty()) {
                 return;
             }
+            final int gen = familyGeneration;
             Api.listMembers(familyId, new Api.Callback() {
                 @Override
                 public void onSuccess(String body) {
                     runOnUiThread(() -> {
+                        if (!isCurrentFamily(familyId, gen)) {
+                            return; // 已切换家庭：丢弃旧家庭的响应
+                        }
                         try {
                             applyMemberList(Member.listFromJson(body), false);
                         } catch (Exception ignored) {
@@ -1929,10 +2685,14 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
             final String familyId = Prefs.get(MainActivity.this).familyId();
+            final int gen = familyGeneration;
             Api.listMembers(familyId, new Api.Callback() {
                 @Override
                 public void onSuccess(String body) {
                     runOnUiThread(() -> {
+                        if (!isCurrentFamily(familyId, gen)) {
+                            return; // 已切换家庭：丢弃旧家庭的响应
+                        }
                         try {
                             applyMemberList(Member.listFromJson(body), false); // 不移动视野
                         } catch (Exception ignored) {
@@ -2017,27 +2777,30 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
-    /** 底部「家庭码」按钮：查看并复制当前家庭码 */
+    /** 底部「家庭码」按钮：查看并复制当前家庭的家庭码 */
     private void showCodeDialog() {
         Prefs prefs = Prefs.get(this);
-        if (prefs.familyId().isEmpty() || prefs.familyCode().isEmpty()) {
+        // 多家庭：必须取「当前家庭自己的家庭码」（family_codes 映射），
+        // 不能用旧的单家庭 family_code 字段——切换家庭后它可能是空的，会误报"尚未加入家庭"
+        String code = prefs.familyCodeOf(prefs.familyId());
+        if (prefs.familyId().isEmpty() || code.isEmpty()) {
             toast(getString(R.string.toast_no_family_code));
             showFamilySetup();
             return;
         }
         View v = getLayoutInflater().inflate(R.layout.dialog_family_code, null);
         TextView tvCode = v.findViewById(R.id.tvCode);
-        tvCode.setText(prefs.familyCode());
+        tvCode.setText(code);
         // 家庭码下方显示二维码：家人可用「扫码加入」直接识别
         ImageView ivQr = v.findViewById(R.id.ivQrCode);
-        Bitmap qr = QrCode.generate(prefs.familyCode(), dp(200));
+        Bitmap qr = QrCode.generate(code, dp(200));
         if (qr != null) {
             ivQr.setImageBitmap(qr);
         }
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.dialog_code_title)
                 .setView(v)
-                .setPositiveButton(R.string.btn_copy, (d, w) -> copyCode(prefs.familyCode()))
+                .setPositiveButton(R.string.btn_copy, (d, w) -> copyCode(code))
                 .setNegativeButton(R.string.btn_back, null)
                 .show();
     }
@@ -2713,6 +3476,9 @@ public class MainActivity extends AppCompatActivity {
                 getString(prefs.offlineMode() ? R.string.menu_online : R.string.menu_offline), (Runnable) this::toggleOffline});
         if (prefs.isOwner()) {
             items.add(new Object[]{R.drawable.ic_stat_location, getString(R.string.menu_banlist), (Runnable) this::showBanListDialog});
+            // 群主一键解散家庭
+            items.add(new Object[]{R.drawable.ic_back, getString(R.string.menu_disband_family),
+                    (Runnable) this::showDisbandFamilyDialog});
         }
         // 群主主动转让（家庭里有其他成员才显示）
         if (prefs.isOwner() && members.size() > 1) {
@@ -3006,6 +3772,9 @@ public class MainActivity extends AppCompatActivity {
 
     /** 面板完整高度（头部 + 主体自然高度，按需测量——成员列表高度会变化） */
     private int panelFullHeight() {
+        if (bottomPanel == null || panelBody == null) {
+            return 0; // 视图未就绪（如 onCreate 早期）：返回 0，调用方会跳过
+        }
         int w = bottomPanel.getWidth();
         if (w <= 0) {
             w = getResources().getDisplayMetrics().widthPixels;
@@ -3017,8 +3786,12 @@ public class MainActivity extends AppCompatActivity {
 
     /** 面板头部高度（拖拽条 + 头部行 + 面板上下内边距）——收缩状态下的完整卡片高度 */
     private int panelHeaderHeight() {
+        if (panelHeader == null || bottomPanel == null) {
+            return dp(132); // 视图未就绪：用默认值兜底，避免空指针
+        }
         View dragHandle = findViewById(R.id.dragHandle);
-        int h = dragHandle.getHeight() + panelHeader.getHeight()
+        int handleH = dragHandle == null ? 0 : dragHandle.getHeight();
+        int h = handleH + panelHeader.getHeight()
                 + bottomPanel.getPaddingTop() + bottomPanel.getPaddingBottom();
         return h > 0 ? h : dp(132);
     }
@@ -3032,25 +3805,65 @@ public class MainActivity extends AppCompatActivity {
         bottomPanel.setTranslationY(t);
     }
 
-    /** 拖拽结束：位移过半则收起，否则展开（位移动画，无布局开销） */
+    /** 拖拽结束（无速度信息）：按距离阈值判定 */
     private void settlePanel(float currentTranslation) {
+        settlePanelWithVelocity(currentTranslation, 0f);
+    }
+
+    /** 甩动速度阈值（像素/秒）：超过它就按手势方向直接决定，不再看拉出距离 */
+    private static final float FLING_VELOCITY = 700f;
+
+    /**
+     * 手势结束时的判定：先看甩动速度，再看拉出的绝对距离（不再按"占最大位移的比例"，
+     * 因为收起态的总位移很大，按比例会让用户觉得"怎么拉都不动"/"拉一点就弹回"）。
+     */
+    private void settlePanelWithVelocity(float currentTranslation, float velocityY) {
         float max = panelMaxTranslate();
-        boolean collapse = currentTranslation >= max / 2f;
+        if (max <= 0f) {
+            animatePanelTranslation(currentTranslation, 0f, false);
+            return;
+        }
+        // 本次手势实际拉出的距离（收起态是从"完全收起"往上拉，展开态是从 0 往下拉）
+        float traveled = lastDragStartCollapsed ? (max - currentTranslation) : currentTranslation;
+        boolean collapse;
+        if (velocityY < -FLING_VELOCITY) {
+            collapse = false;               // 向上快甩：展开
+        } else if (velocityY > FLING_VELOCITY) {
+            collapse = true;                // 向下快甩：收起
+        } else if (lastDragStartCollapsed) {
+            collapse = traveled < dp(DRAG_EXPAND_DP);   // 上拉不到 4dp 才弹回收起
+        } else {
+            collapse = traveled >= dp(DRAG_COLLAPSE_DP); // 下拉超过 16dp 才收起
+        }
         animatePanelTranslation(currentTranslation, collapse ? max : 0f, collapse);
     }
 
     private void animatePanelTranslation(float from, float to, boolean collapse) {
         ValueAnimator anim = ValueAnimator.ofFloat(from, to);
-        anim.setDuration(180);
-        anim.setInterpolator(new DecelerateInterpolator());
+        if (collapse) {
+            // 收起：匀速减速，干净利落
+            anim.setDuration(180);
+            anim.setInterpolator(new DecelerateInterpolator());
+        } else {
+            // 展开：轻微回弹（overshoot），手感更自然
+            anim.setDuration(240);
+            anim.setInterpolator(new OvershootInterpolator(0.9f));
+        }
+        // 展开过程中面板内容渐显，收起时渐隐：层次感更强
+        panelBody.setAlpha(collapse ? 1f : 0f);
+        panelBody.animate().cancel();
+        panelBody.animate().alpha(1f).setDuration(collapse ? 90 : 180).start();
         anim.addUpdateListener(a -> setPanelTranslation((float) a.getAnimatedValue()));
         anim.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
                 panelCollapsed = collapse;
                 panelBody.setVisibility(collapse ? View.GONE : View.VISIBLE);
+                panelBody.setAlpha(1f);
                 bottomPanel.setTranslationY(0);
                 updateScaleBarPosition();
+                // 面板展开/收起改变了列表可视高度，「还有更多家人」提示需要重新判断
+                memberList.post(MainActivity.this::updateMoreMembersHint);
             }
         });
         anim.start();
@@ -3062,97 +3875,116 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * 面板拖拽监听：在灰色横条/头部区域按下后，跟随手指移动线性滑动面板（纯位移，不重排布局）。
-     * 下拉收缩、上拉展开，松手后按位移过半决定去向（带动画）；
-     * 未拖动时不消费事件，保证头部返回按钮等子控件仍可点击。
+     * 面板拖拽监听：在灰色横条/标题行/详情区按下后跟随手指线性位移（纯 translationY，不重排布局）。
+     * 收起态上拉展开、展开态下拉收起；**判定只在松手时做**（按拉出的绝对距离 + 甩动速度），
+     * 拖动过程中绝不提交，否则手指还在屏幕上面板就会弹回去。
      */
+    /** 松手判定用：本次手势开始时面板是否处于收起态 */
+    private boolean lastDragStartCollapsed;
+
     private class PanelDragTouchListener implements View.OnTouchListener {
         private float downRawY;
         private float downTranslation;
-        private float dragMaxTranslate;
+        private int maxTranslate;
         private boolean dragging;
-        private boolean dragStartCollapsed;
+        private boolean startCollapsed;
+        private android.view.VelocityTracker velocity;
 
         @Override
         public boolean onTouch(View v, MotionEvent ev) {
+            int slop = ViewConfiguration.get(MainActivity.this).getScaledTouchSlop();
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downRawY = ev.getRawY();
                     downTranslation = bottomPanel.getTranslationY();
                     dragging = false;
+                    startCollapsed = panelCollapsed;
+                    lastDragStartCollapsed = startCollapsed; // 供松手判定使用
+                    maxTranslate = panelMaxTranslate();
+                    if (velocity != null) {
+                        velocity.recycle();
+                    }
+                    velocity = android.view.VelocityTracker.obtain();
+                    velocity.addMovement(ev);
                     return false; // 不消费 DOWN，子控件仍可点击
-                case MotionEvent.ACTION_MOVE:
-                    if (isDetailOpen()) {
-                        // 详情页：展开态向下拉收起、收起态向上拉展开（方向匹配才触发）
-                        float ddy = ev.getRawY() - downRawY;
-                        int slop = ViewConfiguration.get(MainActivity.this).getScaledTouchSlop();
-                        if (!dragging) {
-                            if (panelCollapsed && ddy < -slop) {
-                                dragging = true;   // 收起态上拉 -> 展开
-                            } else if (!panelCollapsed && ddy > slop) {
-                                dragging = true;   // 展开态下拉 -> 收起
-                            }
-                        }
-                        return dragging;
+                case MotionEvent.ACTION_MOVE: {
+                    if (velocity != null) {
+                        velocity.addMovement(ev);
                     }
                     float dy = ev.getRawY() - downRawY;
-                    if (!dragging && Math.abs(dy) > ViewConfiguration
-                            .get(MainActivity.this).getScaledTouchSlop()) {
-                        // 方向匹配才拖拽：收起态上拉展开、展开态下拉收缩；展开态上拉不触发（避免误收缩）
-                        boolean dirOk = panelCollapsed ? dy < 0 : dy > 0;
-                        if (!dirOk) {
+                    if (!dragging) {
+                        if (Math.abs(dy) <= slop) {
                             return false;
                         }
                         dragging = true;
-                        dragStartCollapsed = panelCollapsed;
-                        dragMaxTranslate = panelMaxTranslate();
-                        if (panelCollapsed) {
-                            // 从收起态开始拖：展开主体但整体保持"完全收起"位移，视觉不变，
-                            // 上拉时主体从屏幕下方滑入
+                        if (startCollapsed) {
+                            // 从收起态开始拖：先把主体显示出来但位移仍为「完全收起」，视觉不变，
+                            // 手指继续上移时主体从屏幕下方滑入
+                            downTranslation = maxTranslate;
+                            setPanelBodyShown(true);
                             panelCollapsed = false;
-                            panelBody.setVisibility(View.VISIBLE);
-                            setPanelTranslation(dragMaxTranslate);
-                            downTranslation = dragMaxTranslate;
+                            setPanelTranslation(maxTranslate);
                         }
+                        // 拖动中可以随时反向：若按下时是展开态、手指先下后上，从这里开始就跟随手指
                     }
-                    if (dragging) {
-                        float target = downTranslation + dy;
-                        setPanelTranslation(Math.max(0f, Math.min(dragMaxTranslate, target)));
-                        return true;
+                    // 跟随手指（带范围限制）：收起态往上 = 位移减小（展开），展开态往下 = 位移增大（收起）；
+                    // 反向拖动会被 Math.min/max 夹住，只能回到原位，不会越界
+                    float target = Math.max(0f, Math.min(maxTranslate, downTranslation + dy));
+                    setPanelTranslation(target);
+                    return true;
+                }
+                case MotionEvent.ACTION_UP: {
+                    float velocityY = 0f;
+                    if (velocity != null) {
+                        velocity.addMovement(ev);
+                        velocity.computeCurrentVelocity(1000);
+                        velocityY = velocity.getYVelocity();
+                        velocity.recycle();
+                        velocity = null;
                     }
-                    return false;
-                case MotionEvent.ACTION_UP:
-                    if (isDetailOpen()) {
-                        if (dragging) {
-                            dragging = false;
-                            // 详情页：下拉收缩详情（不返回列表；要返回用返回键/返回按钮）
-                            togglePanel();
-                            return true;
-                        }
+                    if (!dragging) {
                         return false;
                     }
-                    if (dragging) {
-                        dragging = false;
-                        settlePanel(bottomPanel.getTranslationY());
-                        return true;
-                    }
-                    return false;
+                    dragging = false;
+                    settlePanelWithVelocity(bottomPanel.getTranslationY(), velocityY);
+                    return true;
+                }
                 case MotionEvent.ACTION_CANCEL:
-                    if (isDetailOpen()) {
-                        dragging = false;
-                        return true;
+                    if (velocity != null) {
+                        velocity.recycle();
+                        velocity = null;
                     }
-                    if (dragging) {
-                        dragging = false;
-                        panelCollapsed = dragStartCollapsed;
-                        panelBody.setVisibility(dragStartCollapsed ? View.GONE : View.VISIBLE);
-                        bottomPanel.setTranslationY(0);
-                        return true;
+                    if (!dragging) {
+                        return false;
                     }
+                    dragging = false;
+                    // 手势被系统打断：还原到手势开始时的状态，避免状态错乱导致后续手势失效
+                    panelCollapsed = startCollapsed;
+                    if (startCollapsed) {
+                        setPanelBodyShown(false);
+                    }
+                    setPanelTranslation(0f);
+                    updateScaleBarPosition();
+                    return true;
+                default:
                     return false;
             }
-            return false;
         }
+    }
+
+    /** 收起态上拉多少 dp 就展开（松手判定；取得很小，避免"拉了一点又弹回去"） */
+    private static final int DRAG_EXPAND_DP = 4;
+    /** 展开态下拉多少 dp 才收起（需要一点意图，避免误触） */
+    private static final int DRAG_COLLAPSE_DP = 16;
+
+    /** 显示/隐藏面板主体（统一收口，避免各处漏掉 alpha/动画取消） */
+    private void setPanelBodyShown(boolean shown) {
+        if (panelBody == null) {
+            return;
+        }
+        panelBody.animate().cancel();
+        panelBody.setAlpha(1f);
+        panelBody.setVisibility(shown ? View.VISIBLE : View.GONE);
     }
 
     // ---------------- 自绘刻度尺（默认刻度尺被底部面板遮挡，改为自绘并跟随面板高度） ----------------
@@ -3167,7 +3999,6 @@ public class MainActivity extends AppCompatActivity {
         scaleLine = findViewById(R.id.scaleLine);
         // |___| 样式深色刻度线（地图底图固定为浅色，深色线保证清晰）
         scaleLine.setBackground(new ScaleLineDrawable(0xFF1A1A2E, dp(2), dp(5)));
-        // 注：轻量版地图SDK 没有默认刻度尺（UiSettings 无 setScaleControlsEnabled），刻度尺全部由本应用自绘
         aMap.setOnCameraChangeListener(new AMap.OnCameraChangeListener() {
             @Override
             public void onCameraChange(CameraPosition cameraPosition) {
@@ -3175,6 +4006,10 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onCameraChangeFinish(CameraPosition cameraPosition) {
+                // 缩放结束后切换标点样式（卡片 <-> 圆点）与精度圈显隐，并刷新刻度尺
+                if (cameraPosition != null) {
+                    refreshMarkerStyleIfNeeded(cameraPosition.zoom);
+                }
                 updateScaleBar();
             }
         });
@@ -3183,7 +4018,8 @@ public class MainActivity extends AppCompatActivity {
 
     /** 刻度尺位置：面板展开时位于面板上方，收起时下移到头部上方；详情页也保持显示（位于详情面板上方） */
     private void updateScaleBarPosition() {
-        if (scaleBar == null) {
+        // 视图未就绪时直接跳过（onCreate 早期/极端时序），避免空指针崩溃
+        if (scaleBar == null || !panelViewsReady()) {
             return;
         }
         scaleBar.setVisibility(View.VISIBLE);
@@ -3272,6 +4108,9 @@ public class MainActivity extends AppCompatActivity {
 
     /** 点击成员行 -> 在底部悬浮窗口内展示详情（电量/导航/地址/网络 + 创建者操作） */
     private void showMemberDetail(final Member m) {
+        if (!safeUi()) {
+            return; // 活动已销毁：不再操作视图（异步回调可能晚到）
+        }
         View v = getLayoutInflater().inflate(R.layout.dialog_member_detail, null);
         TextView dAvatar = v.findViewById(R.id.dAvatar);
         TextView dName = v.findViewById(R.id.dName);
@@ -3699,6 +4538,7 @@ public class MainActivity extends AppCompatActivity {
             public void onSuccess(String body) {
                 runOnUiThread(() -> {
                     toast(getString(R.string.toast_avatar_uploaded));
+                    invalidateMemberIconAndAvatar(myDeviceId); // 头像地址不变但内容已变：强制重绘标点
                     loadMembers(); // 重新拉取成员列表以拿到带新头像 URL 的数据
                 });
             }
@@ -3735,19 +4575,13 @@ public class MainActivity extends AppCompatActivity {
 
     // ---------------- 切换家庭（创建者需先转让群主） ----------------
 
-    /** 切换家庭：创建者且家庭里有其他成员时，先选择转让群主；否则直接切换 */
+    /**
+     * 「家庭设置」入口：新增/加入一个家庭。
+     * 现在支持同一设备同时属于多个家庭，所以**不再需要**为了换家庭而转让群主或退出原家庭；
+     * 想切换当前查看的家庭，直接在主页面成员列表上左右滑动即可。
+     */
     private void switchFamilyFlow() {
-        Prefs prefs = Prefs.get(this);
-        if (prefs.familyId().isEmpty()) {
-            showFamilySetup();
-            return;
-        }
-        if (!prefs.isOwner() || members.size() <= 1) {
-            showFamilySetup();
-            return;
-        }
-        // 群主且家庭里有其他人：先选新群主（转让后进入切换家庭流程）
-        showTransferOwnerDialog(true);
+        showFamilySetup();
     }
 
     /** 主动转让群主：选择新的群主。thenSwitch=true 表示转让后进入「切换家庭」流程；=false 表示仅转让 */
@@ -3986,7 +4820,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void installApk(File apk) {        try {
+    private void installApk(File apk) {
+        try {
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apk);
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
@@ -4002,6 +4837,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateStatusUi(int status) {
+        if (!safeUi() || statusDot == null || tvStatus == null || statusPill == null
+                || statusPill.getBackground() == null) {
+            return; // 异步回调可能在 Activity 已销毁后到达：直接跳过，避免空指针/崩溃
+        }
         int pillColor;
         int textColor;
         int dotRes;

@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 灰色小横条：外层 32dp 触摸区，内部 6dp 视觉条（扩大拖拽识别范围，视觉不变） -->
+<!-- 灰色拖拽条：整个 View（整行 × 40dp）都是触摸区，方便按住拖拽；
+     中间只画一条 6dp 细条作为视觉提示（不拉伸，水平居中）。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:top="13dp"
-        android:bottom="13dp">
+    <item android:gravity="center">
         <shape android:shape="rectangle">
             <solid android:color="@color/drag_handle" />
-            <corners android:radius="2dp" />
+            <corners android:radius="3dp" />
+            <size
+                android:width="72dp"
+                android:height="6dp" />
         </shape>
     </item>
 </layer-list>

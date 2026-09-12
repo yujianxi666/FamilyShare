@@ -10,14 +10,16 @@
 | --- | --- | --- | --- |
 | POST | `/api/family/create` | `{deviceId, name}` | `{familyId, code}` |
 | POST | `/api/family/join` | `{code, deviceId, name}` | `{status:"pending", requestId}`（**加入需群主同意**）；已是成员返回 `{status:"ok",familyId,code}`；404=码不存在或被拉黑 |
-| GET | `/api/family/join/status?requestId=&deviceId=` | - | `{status:"pending"\|"approved"\|"rejected"}`；approved 含 `familyId,code`（申请方轮询） |
+| GET | `/api/family/join/status?requestId=&deviceId=` | - | `{status:"pending"\|"approved"\|"rejected"}`；approved 含 `familyId,code`（申请方轮询；`deviceId` 须为申请人本人） |
 | POST | `/api/family/join/handle` | `{familyId, ownerDeviceId, requestId, approve}` | `{status:"ok"}`；403=非群主 |
 | GET | `/api/family/join/list?familyId=&deviceId=` | - | `[{requestId,deviceId,name,createdAt}]`（仅群主，待审批） |
-| GET | `/api/family/members?familyId=` | - | `[{deviceId,name,online,offlineMode,isOwner,track,trackInterval,location,trajectory,avatar}]`（isOwner=是否群主） |
-| POST | `/api/family/member/remove` | `{familyId, ownerDeviceId, targetDeviceId, ban}` | `{status:"ok"}`（非创建者 403；ban=true 加入黑名单；被移出者立即收到 `member-removed` 退出） |
+| GET | `/api/family/members?familyId=[&deviceId=]` | - | `[{deviceId,name,online,offlineMode,isOwner,track,trackInterval,location,trajectory,avatar}]`（isOwner=是否群主；带 `deviceId` 时校验其确属该家庭） |
+| POST | `/api/family/member/remove` | `{familyId, ownerDeviceId, targetDeviceId, ban}` | `{status:"ok"}`（非创建者 403；群主不能移除自己 400；ban=true 加入黑名单；被移出者立即收到 `member-removed` 退出） |
 | GET | `/api/family/banned?familyId=&deviceId=` | - | `[{deviceId,name,bannedAt}]`（仅创建者） |
 | POST | `/api/family/member/unban` | `{familyId, ownerDeviceId, targetDeviceId}` | `{status:"ok"}` |
 | POST | `/api/family/owner/transfer` | `{familyId, ownerDeviceId, newOwnerDeviceId}` | `{status:"ok"}`；403=非创建者 |
+| GET | `/api/family/my?deviceId=` | - | `[{familyId,code,isOwner,memberCount,createdAt}]`（该设备加入的**全部**家庭；同一设备可同时属于多个家庭，客户端左右滑动切换） |
+| POST | `/api/family/disband` | `{familyId, ownerDeviceId}` | `{status:"ok"}`；403=非群主。解散后家庭被删除，全员收到 WS `family-disbanded`，客户端把该家庭从家庭列表中移除 |
 | POST | `/api/family/invite` | `{familyId, fromDeviceId, targetDeviceId, code, fromName}` | `{status:"ok"}` 或 `{status:"offline"}`（WS 推送 `invite`） |
 | POST | `/api/location/report` | `{deviceId,familyId,lat,lng,accuracy,ts,battery,network,address}` | `{status:"ok"}` |
 | POST | `/api/location/request` | `{familyId, requesterId, targetDeviceId}` | `{status:"ok"}` 或 `{status:"offline"}` |
@@ -30,7 +32,7 @@
 | POST | `/api/bug/update` | `{id,content?,resolved?}` | `{status:"ok"}`（改文本/标记完成；404=不存在） |
 | GET | `/api/update/latest` | - | `{versionCode,versionName,note,url,hasApk,md5,size}`（禁缓存；每次实时读文件并算 MD5） |
 | GET | `/downloads/app-release.apk` | - | APK 静态下载 |
-| GET | `/bugadmin/{token}` | - | Bug 管理网页，须带路径口令（如 `/bugadmin/YOUR_SECRET`） |
+| GET | `/bugadmin/{token}` | - | Bug 管理网页，须带路径口令（如 `/bugadmin/yjx120606`） |
 | GET | `/api/health` | - | `{status:"ok", time}` |
 
 > **访问口令**：白名单 `/api/health`、`/downloads/**`、`/bugadmin/**` 外，其余 `/api/**`、`/ws`、`/icons/**` 都必须在请求头 `X-Api-Token` 或查询参数 `token` 携带访问口令（服务端 `app.api-token`、客户端 `API_TOKEN`，需一致）。
@@ -41,12 +43,13 @@
 ### 身份模型
 
 - `deviceId`：App 首次启动生成的 UUID，持久化在本地，即设备身份。
-- `familyId` + 6 位 `code`：家庭。凭家庭码提交**加入申请**，由群主（`owner`）同意后才入群（这就是“已授权”）；群主可移出/拉黑/转让群主。
+- `familyId` + 6 位 `code`：家庭。凭家庭码提交**加入申请**，由群主（`owner`）同意后才入群（这就是“已授权”）；群主可移出/拉黑/转让群主，也可**一键解散家庭**。
+- **同一设备可同时属于多个家庭**（创建/加入新家庭不会退出原有家庭）；客户端保存已加入家庭列表，在主页面成员列表上左右滑动切换当前查看的家庭。WebSocket / 上报都只针对「当前家庭」，切换家庭时客户端会重连。
 - 所有接口需携带统一的访问口令，且会校验设备是否属于该家庭，非家庭成员上报/拉取一律 403。
 
 ## 2. WebSocket 通道
 
-地址：`wss://your-server.example.com/ws?deviceId=xx&familyId=xx&name=xx&token=<API口令>&offline=1(可选)`。
+地址：`wss://fms.uiero.com/ws?deviceId=xx&familyId=xx&name=xx&token=<API口令>&offline=1(可选)`。
 `token` 必须正确；校验失败或被拉黑 → 关闭 4001；在线时被移出 → 关闭 4002。心跳由客户端 OkHttp `pingInterval(30s)` 维持。
 
 ### 服务器 → 客户端消息
@@ -64,6 +67,7 @@
 | `owner-changed` | `deviceId` | 群主转让（deviceId=新群主） |
 | `invite` | `code,from,name` | 收到加入家庭邀请（存客户端「消息」列表） |
 | `join-request` | `requestId,deviceId,name` | 有人申请加入本家庭（群主审批，存「消息」列表） |
+| `family-disbanded` | `familyId,by` | 家庭被群主解散（客户端把该家庭从本地家庭列表移除；若还有其它家庭则自动切换过去） |
 
 ## 3. 上报节奏
 

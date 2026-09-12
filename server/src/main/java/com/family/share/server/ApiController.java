@@ -37,12 +37,8 @@ public class ApiController {
     private WsHandler ws;
 
     /** 访问口令（application.properties 的 app.api-token），用于注入 Bug 管理页的 fetch 头 */
-    @Value("${app.api-token:YOUR_API_TOKEN}")
+    @Value("${app.api-token:familyshare-yjx120606}")
     private String apiToken;
-
-    /** Bug 管理页的路径口令（application.properties 的 app.bug-admin-token），须访问 /bugadmin/<token> */
-    @Value("${app.bug-admin-token:bugadmin-default}")
-    private String bugAdminToken;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -57,6 +53,7 @@ public class ApiController {
             throw new BadRequest("deviceId and name required");
         }
         Store.Family f = store.createFamily(deviceId, name);
+        store.flush(); // 新家庭立即落库，避免服务在 2 秒持久化周期内重启导致刚创建的家庭码失效
         return map("familyId", f.id, "code", f.code);
     }
 
@@ -78,6 +75,7 @@ public class ApiController {
         if (req == null) {
             return notFound("家庭码不存在或已被拉黑");
         }
+        store.flush(); // 申请立即落库，避免服务重启（客户端会继续轮询）后查不到该申请
         // 通知全家（主要是群主）有新的加入申请
         ws.broadcastToFamily(req.familyId, map("type", "join-request", "requestId", req.id,
                 "deviceId", deviceId, "name", name));
@@ -91,6 +89,10 @@ public class ApiController {
         Store.JoinRequest r = store.getJoinRequest(requestId);
         if (r == null) {
             return notFound("request not found");
+        }
+        // 只允许申请者本人查询自己的申请状态，避免用口令探测他人申请
+        if (deviceId != null && !deviceId.isEmpty() && !deviceId.equals(r.deviceId)) {
+            return ResponseEntity.status(403).body(map("error", "not the requester"));
         }
         if ("pending".equals(r.status)) {
             return ResponseEntity.ok(map("status", "pending"));
@@ -122,6 +124,7 @@ public class ApiController {
         if (r == null) {
             return notFound("request not found or already handled");
         }
+        store.flush(); // 审批结果（含新成员）立即落库
         if (approve && "approved".equals(r.status)) {
             ws.broadcastToFamily(familyId, map("type", "member-joined", "deviceId", r.deviceId, "name", r.name));
         }
@@ -142,11 +145,63 @@ public class ApiController {
         return ResponseEntity.ok(store.listJoinRequests(familyId));
     }
 
-    /** GET /api/family/members?familyId=xx -> [{deviceId,name,online,location}] */
+    /**
+     * GET /api/family/my?deviceId=xx -> [{familyId,code,owner,isOwner,memberCount,createdAt}]
+     * 该设备加入的全部家庭（支持同时属于多个家庭，客户端据此在家庭间左右滑动切换）。
+     */
+    @GetMapping("/api/family/my")
+    public ResponseEntity<?> myFamilies(@RequestParam(value = "deviceId", required = false) String deviceId) {
+        if (deviceId == null || deviceId.isEmpty()) {
+            return badRequest("deviceId required");
+        }
+        java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (Store.Family f : store.familiesOf(deviceId)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("familyId", f.id);
+            m.put("code", f.code);
+            m.put("isOwner", deviceId.equals(f.owner));
+            m.put("memberCount", f.members.size());
+            m.put("createdAt", f.createdAt);
+            out.add(m);
+        }
+        return ResponseEntity.ok(out);
+    }
+
+    /**
+     * POST /api/family/disband {familyId, ownerDeviceId} -> {status:"ok"}
+     * 群主一键解散家庭：删除该家庭，并通知所有在线成员（客户端会从家庭列表中移除它）。
+     */
+    @PostMapping("/api/family/disband")
+    public ResponseEntity<Map<String, Object>> disband(@RequestBody Map<String, Object> body) {
+        String familyId = str(body.get("familyId"));
+        String owner = str(body.get("ownerDeviceId"));
+        Store.Family f = store.getFamily(familyId);
+        if (f == null) {
+            return notFound("family not found");
+        }
+        if (!f.owner.equals(owner)) {
+            return ResponseEntity.status(403).body(map("error", "not owner"));
+        }
+        // 先通知在线成员（此时家庭还在，广播才发得出去），再真正解散
+        ws.broadcastToFamily(familyId, map("type", "family-disbanded", "familyId", familyId,
+                "by", owner == null ? "" : owner));
+        store.disbandFamily(familyId);
+        store.flush();
+        System.out.println("[family] disband family=" + familyId + " by=" + owner);
+        return ResponseEntity.ok(map("status", "ok"));
+    }
+
+    /** GET /api/family/members?familyId=xx[&deviceId=xx] -> [{deviceId,name,online,location...}]
+     *  deviceId 用于校验请求者确属该家庭（防止用同一个访问口令枚举其它家庭的位置）；
+     *  旧版客户端未携带该参数时保持兼容（不校验）。 */
     @GetMapping("/api/family/members")
-    public ResponseEntity<?> members(@RequestParam(value = "familyId", required = false) String familyId) {
+    public ResponseEntity<?> members(@RequestParam(value = "familyId", required = false) String familyId,
+                                    @RequestParam(value = "deviceId", required = false) String deviceId) {
         if (store.getFamily(familyId) == null) {
             return notFound("family not found");
+        }
+        if (deviceId != null && !deviceId.isEmpty() && !store.isMember(familyId, deviceId)) {
+            return ResponseEntity.status(403).body(map("error", "not a family member"));
         }
         return ResponseEntity.ok(store.listMembers(familyId, ws::isOnline));
     }
@@ -165,6 +220,10 @@ public class ApiController {
         if (!f.owner.equals(owner)) {
             return ResponseEntity.status(403).body(map("error", "not owner"));
         }
+        // 群主不能把自己移出/拉黑自己：否则家庭会失去群主，成员与黑名单都无法再管理
+        if (target != null && target.equals(owner)) {
+            return badRequest("owner cannot remove self; transfer ownership first");
+        }
         boolean removed = ban ? store.banMember(familyId, target) : store.removeMember(familyId, target);
         if (removed) {
             // 先直接通知被移出者本人（此时其 WS 可能仍在线），客户端据此立即退出原家庭
@@ -173,6 +232,8 @@ public class ApiController {
             ws.closeSession(target, 4002, "removed");
             // 通知其余家人移除该成员
             ws.broadcastToFamily(familyId, map("type", "member-removed", "deviceId", target));
+            // 成员与黑名单变化立即落库，避免服务在 2 秒持久化周期前重启导致状态回滚
+            store.flush();
         }
         return ResponseEntity.ok(map("status", "ok"));
     }
@@ -235,6 +296,10 @@ public class ApiController {
         }
         if (!f.owner.equals(deviceId)) {
             return ResponseEntity.status(403).body(map("error", "not owner"));
+        }
+        // 请求者必须确属该家庭（防止用同一个访问口令枚举其它家庭的黑名单）
+        if (deviceId != null && !deviceId.isEmpty() && !store.isMember(familyId, deviceId)) {
+            return ResponseEntity.status(403).body(map("error", "not a family member"));
         }
         return ResponseEntity.ok(store.listBanned(familyId));
     }
@@ -411,6 +476,8 @@ public class ApiController {
             return notFound("member not found");
         }
         f.owner = newOwner;
+        // 群主变更立即落库（否则服务在 2 秒持久化周期内重启会丢掉这次转让）
+        store.flush();
         // 通知全家（新群主据此更新本地群主标记）
         ws.broadcastToFamily(familyId, map("type", "owner-changed", "deviceId", newOwner));
         return ResponseEntity.ok(map("status", "ok"));
@@ -594,11 +661,14 @@ public class ApiController {
         }
     }
 
+    /** Bug 管理页的路径口令（application.properties 的 app.bug-admin-token） */
+    @Value("${app.bug-admin-token:yjx120606}")
+    private String bugAdminToken;
+
     /**
      * GET /bugadmin/{token} -> 返回 bugadmin.html（token 正确才可访问）。
-     * 口令来自配置 app.bug-admin-token（默认 bugadmin-default），请在 application.properties 设成你自己的值。
      * 页面已打包进 jar（classpath 根目录），无需与 jar 同目录的独立文件。
-     * 以路径段作为口令，避免直接把 html 暴露给未知访问者。
+     * 以路径段作为简易口令，避免直接把 html 暴露给未知访问者。
      */
     @GetMapping(value = "/bugadmin/{token}", produces = MediaType.TEXT_HTML_VALUE + ";charset=UTF-8")
     public ResponseEntity<String> bugAdmin(@PathVariable("token") String token) {

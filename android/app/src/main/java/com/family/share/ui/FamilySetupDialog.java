@@ -59,8 +59,8 @@ public final class FamilySetupDialog {
 
         final Prefs prefs = Prefs.get(activity);
         etName.setText(prefs.deviceName());
-        if (!prefs.familyCode().isEmpty()) {
-            tvCurrentCode.setText("当前家庭码：" + prefs.familyCode() + "（可分享给家人加入）");
+        if (!prefs.familyCodeOf(prefs.familyId()).isEmpty()) {
+            tvCurrentCode.setText("当前家庭码：" + prefs.familyCodeOf(prefs.familyId()) + "（可分享给家人加入）");
             tvCurrentCode.setVisibility(View.VISIBLE);
         }
         // 扫码加入：相机权限仅在点击「扫码加入」按钮时才向用户申请
@@ -161,8 +161,8 @@ public final class FamilySetupDialog {
                         String familyId = o.optString("familyId");
                         String newCode = o.optString("code", code);
                         prefs.deviceName(name);
-                        prefs.familyId(familyId);
-                        prefs.familyCode(newCode);
+                        // 关键：加入/创建新家庭**不退出原有家庭**——记录进家庭列表并切换为当前家庭
+                        prefs.addFamily(familyId, newCode);
                         prefs.isOwner(create);
                         prefs.shareEnabled(true);
                         dialog.dismiss();

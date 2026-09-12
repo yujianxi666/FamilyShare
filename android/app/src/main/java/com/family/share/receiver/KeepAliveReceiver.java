@@ -88,14 +88,24 @@ public class KeepAliveReceiver extends BroadcastReceiver {
         }
     }
 
-    /** 取消看门狗（服务销毁时调用） */
+    /** 取消看门狗（服务销毁时调用）：闹钟 + 系统级 JobScheduler 任务一起取消 */
     public static void cancel(Context context) {
+        try {
+            JobScheduler js = (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            if (js != null) {
+                js.cancel(WATCHDOG_JOB_ID); // 否则关掉共享后系统仍每 15 分钟唤醒一次（纯耗电）
+            }
+        } catch (Exception ignored) {
+        }
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (am == null) {
             return;
         }
         Intent i = new Intent(context, KeepAliveReceiver.class);
-        am.cancel(pendingIntent(context, i));
+        try {
+            am.cancel(pendingIntent(context, i));
+        } catch (Exception ignored) {
+        }
     }
 
     private static PendingIntent pendingIntent(Context context, Intent intent) {

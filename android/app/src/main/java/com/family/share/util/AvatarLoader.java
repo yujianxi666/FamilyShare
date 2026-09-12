@@ -73,6 +73,18 @@ public final class AvatarLoader {
         });
     }
 
+    /**
+     * 强制丢弃某个 URL 的内存缓存并重新下载。
+     * 用于头像更新：头像地址固定为 icons/&lt;deviceId&gt;.jpg（内容变了地址不变），
+     * 若只靠 URL 比对，更新后仍会命中旧缓存，标点/列表头像不会变。
+     */
+    public static void evict(String url) {
+        String full = url == null ? "" : (url.startsWith("http") ? url : AppConfig.SERVER_URL + "/" + url);
+        if (!full.isEmpty()) {
+            cache.remove(full);
+        }
+    }
+
     /** 圆形裁剪（输出正方形位图，用于圆形头像显示） */
     public static Bitmap circleCrop(Bitmap src) {
         if (src == null) {

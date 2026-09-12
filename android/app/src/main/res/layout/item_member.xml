@@ -3,15 +3,18 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="?attr/selectableItemBackground"
+    android:layout_marginTop="3dp"
+    android:layout_marginBottom="3dp"
+    android:background="@drawable/bg_member_row"
+    android:foreground="?attr/selectableItemBackground"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:paddingStart="4dp"
-    android:paddingEnd="4dp"
-    android:paddingTop="10dp"
-    android:paddingBottom="10dp">
+    android:paddingStart="10dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
 
-    <!-- 头像：首字圆形 -->
+    <!-- 头像：首字圆形（上传头像后由代码换成圆形图片） -->
     <TextView
         android:id="@+id/avatar"
         android:layout_width="42dp"

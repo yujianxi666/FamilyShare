@@ -2,12 +2,15 @@ package com.family.share.ui;
 
 import android.content.res.ColorStateList;
 import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.LayerDrawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -166,7 +169,7 @@ public class MemberAdapter extends RecyclerView.Adapter<MemberAdapter.VH> {
             h.tvOwnerBadge.setVisibility(m.isOwner ? View.VISIBLE : View.GONE);
         }
 
-        // 头像：已上传显示图片（圆形裁剪），否则名字首字 + 与地图标点一致的配色
+        // 头像：已上传显示图片（圆形裁剪），否则名字首字 + 与地图标点一致的配色；统一外套一圈淡描边
         String initial = (m.name != null && !m.name.isEmpty()) ? m.name.substring(0, 1) : "?";
         int color = isSelf ? MemberColors.selfColor() : MemberColors.colorFor(m.deviceId);
         if (m.avatar != null && !m.avatar.isEmpty()) {
@@ -178,20 +181,22 @@ public class MemberAdapter extends RecyclerView.Adapter<MemberAdapter.VH> {
                 if (bmp != null) {
                     h.avatar.setText("");
                     h.avatar.setBackgroundTintList(null);
-                    h.avatar.setBackground(new BitmapDrawable(h.avatar.getResources(),
-                            AvatarLoader.circleCrop(bmp)));
+                    h.avatar.setBackground(ringed(new BitmapDrawable(h.avatar.getResources(),
+                            AvatarLoader.circleCrop(bmp))));
                 } else {
                     // 加载失败：回退为首字彩圈
                     h.avatar.setText(initial);
-                    h.avatar.setBackgroundResource(R.drawable.bg_avatar);
                     h.avatar.setBackgroundTintList(ColorStateList.valueOf(color));
+                    h.avatar.setBackground(ringed(ContextCompat.getDrawable(h.avatar.getContext(),
+                            R.drawable.bg_avatar)));
                 }
             });
         } else {
             h.avatar.setTag(null);
             h.avatar.setText(initial);
-            h.avatar.setBackgroundResource(R.drawable.bg_avatar);
             h.avatar.setBackgroundTintList(ColorStateList.valueOf(color));
+            h.avatar.setBackground(ringed(ContextCompat.getDrawable(h.avatar.getContext(),
+                    R.drawable.bg_avatar)));
         }
 
         h.itemView.setOnClickListener(v -> listener.onClick(m));
@@ -199,6 +204,18 @@ public class MemberAdapter extends RecyclerView.Adapter<MemberAdapter.VH> {
             listener.onLongClick(m);
             return true;
         });
+    }
+
+    /**
+     * 给头像底图外套一圈淡描边，让头像与浅色卡片背景之间边界清晰（彩色底与真实头像都适用）。
+     * 用 LayerDrawable 叠加，这样调用方仍可继续用 setBackgroundTintList 给底色染色。
+     */
+    private Drawable ringed(Drawable base) {
+        if (base == null) {
+            return null;
+        }
+        Drawable ring = ContextCompat.getDrawable(inflater.getContext(), R.drawable.bg_avatar_ring);
+        return new LayerDrawable(new Drawable[]{base, ring});
     }
 
     @Override

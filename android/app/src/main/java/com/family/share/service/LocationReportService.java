@@ -53,6 +53,11 @@ public class LocationReportService extends Service {
     private AlarmManager alarmManager;
     private PendingIntent reportPi;
     private boolean started;
+    /**
+     * 家庭代号：连接/上报时绑定「当前家庭」。切换家庭后代号自增，
+     * 于是切换前发起、切换后才返回的定位结果会被丢弃（不会带着新家庭 ID 上报/广播）。
+     */
+    private int familyGeneration;
 
     private final WsClient.Listener wsListener = new WsClient.Listener() {
         @Override
@@ -63,7 +68,9 @@ public class LocationReportService extends Service {
 
         @Override
         public void onMemberLocation(Member m) {
-            broadcastLocation(m);
+            // WS 收到的家人位置属于「当前连接的那个家庭」；把当前家庭 ID 带上，
+            // 若此刻用户已切到别的家庭，前台会丢弃这条广播（避免上一个家庭的标签跑到当前家庭）
+            broadcastLocation(prefs.familyId(), m);
         }
 
         @Override
@@ -159,6 +166,14 @@ public class LocationReportService extends Service {
         }
 
         @Override
+        public void onFamilyDisbanded(String familyId) {
+            // 家庭被群主解散：转发给 UI，把该家庭从本地家庭列表中移除并切到其它家庭
+            sendBroadcast(new Intent(AppConfig.BROADCAST_FAMILY_DISBANDED)
+                    .setPackage(getPackageName())
+                    .putExtra("familyId", familyId));
+        }
+
+        @Override
         public void onStatus(boolean connected) {
             Intent i = new Intent(AppConfig.BROADCAST_SERVICE_STATUS)
                     .setPackage(getPackageName())
@@ -207,12 +222,15 @@ public class LocationReportService extends Service {
             doReport();
             scheduleNextReport();
         } else if (AppConfig.ACTION_RECONNECT.equals(action)) {
-            // 家庭切换后重连
+            // 家庭切换后重连：家庭代号自增，让切换前发起的上报/广播结果全部作废
+            familyGeneration++;
             if (wsClient != null) {
                 wsClient.disconnect();
             }
             connectWs();
             scheduleNextReport();
+            // 切到新家庭后主动上报一次，让新家人尽快看到我的位置
+            doReport();
         } else if (AppConfig.ACTION_STOP_RING.equals(action)) {
             // 主页面「关闭响铃」按钮 / 响铃通知按钮：立即停止
             ringHandler.post(this::stopRing);
@@ -270,14 +288,22 @@ public class LocationReportService extends Service {
         if (familyId.isEmpty() || prefs.offlineMode()) {
             return;
         }
+        // 绑定本次上报所属的家庭代号：切换家庭后本次结果直接作废
+        final int gen = familyGeneration;
+        // 电量/网络各取一次，供上报与本地广播共用（原来取了两次，且在定位回调里重复读系统服务）
+        final int battery = DeviceInfo.battery(this);
+        final String network = DeviceInfo.network(this);
         locationHelper.requestOnce(new LocationHelper.Callback() {
             @Override
             public void onResult(double lat, double lng, float accuracy, long time, String address) {
                 prefs.saveLastLocation(lat, lng, time);
+                // 定位期间用户切换了家庭：本次结果属于旧家庭，直接丢弃（不报服务器、不广播），
+                // 否则旧家庭的刷新结果会带着新家庭 ID 出现，家人标签会临时跑到当前家庭
+                if (gen != familyGeneration) {
+                    return;
+                }
                 Api.reportLocation(prefs.deviceId(), familyId, lat, lng, accuracy, time,
-                        DeviceInfo.battery(LocationReportService.this),
-                        DeviceInfo.network(LocationReportService.this),
-                        address,
+                        battery, network, address,
                         new Api.Callback() {
                             @Override
                             public void onSuccess(String body) {
@@ -289,8 +315,8 @@ public class LocationReportService extends Service {
                                 // 静默，等待下次上报
                             }
                         });
-                // 本地广播，让前台 UI 及时刷新自己的标记
-                broadcastLocation(selfMember(lat, lng, accuracy, time, address));
+                // 本地广播，让前台 UI 及时刷新自己的标记（带发起时的家庭 ID）
+                broadcastLocation(familyId, selfMember(lat, lng, accuracy, time, address, battery, network));
             }
 
             @Override
@@ -300,7 +326,8 @@ public class LocationReportService extends Service {
         });
     }
 
-    private Member selfMember(double lat, double lng, float accuracy, long time, String address) {
+    private Member selfMember(double lat, double lng, float accuracy, long time, String address,
+                              int battery, String network) {
         Member m = new Member();
         m.deviceId = prefs.deviceId();
         m.name = prefs.deviceName();
@@ -309,16 +336,22 @@ public class LocationReportService extends Service {
         m.accuracy = accuracy;
         m.ts = time;
         m.address = address;
-        m.battery = DeviceInfo.battery(this);
-        m.network = DeviceInfo.network(this);
+        m.battery = battery;
+        m.network = network;
         m.online = !prefs.offlineMode();
         m.hasLocation = true;
         return m;
     }
 
-    private void broadcastLocation(Member m) {
+    /**
+     * 广播一条位置给前台 UI。
+     * familyId 由调用方传入（发起本次上报时所处的家庭），**不能在这里读「当前家庭」**：
+     * 否则定位期间用户切换了家庭时，旧家庭的这次结果会带着新家庭 ID 广播，家人标签会临时跑到当前家庭。
+     */
+    private void broadcastLocation(String familyId, Member m) {
         Intent i = new Intent(AppConfig.BROADCAST_LOCATION_UPDATE)
                 .setPackage(getPackageName())
+                .putExtra("familyId", familyId == null ? "" : familyId)
                 .putExtra("deviceId", m.deviceId)
                 .putExtra("name", m.name)
                 .putExtra("lat", m.lat)
@@ -382,26 +415,39 @@ public class LocationReportService extends Service {
             // 关闭了「允许他人响铃」或处于下线模式：忽略响铃请求
             return;
         }
+        boolean played = false;
         try {
             Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
             if (uri == null) {
                 uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
             }
-            if (uri == null) {
-                return;
+            if (uri != null) {
+                ringPlayer = new MediaPlayer();
+                ringPlayer.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build());
+                ringPlayer.setDataSource(this, uri);
+                ringPlayer.setLooping(true);
+                ringPlayer.prepare();
+                ringPlayer.start();
+                boostRingVolume();
+                played = true;
             }
-            ringPlayer = new MediaPlayer();
-            ringPlayer.setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build());
-            ringPlayer.setDataSource(this, uri);
-            ringPlayer.setLooping(true);
-            ringPlayer.prepare();
-            ringPlayer.start();
-            boostRingVolume();
-        } catch (Exception ignored) {
-            // 播放失败静默
+        } catch (Exception e) {
+            played = false;
+        }
+        if (!played) {
+            // 播放失败（铃声不可用/被系统占用等）：不显示「正在响铃」通知与停止按钮，避免用户以为手机在响
+            if (ringPlayer != null) {
+                try {
+                    ringPlayer.release();
+                } catch (Exception ignored) {
+                }
+                ringPlayer = null;
+            }
+            restoreRingVolume();
+            return;
         }
         // 常驻通知（含「停止响铃」按钮）
         Notification notification = new NotificationCompat.Builder(this, AppConfig.CHANNEL_ID)

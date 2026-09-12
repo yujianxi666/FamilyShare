@@ -56,6 +56,9 @@ public class WsClient {
         /** 有人申请加入家庭（群主审批；requestId/deviceId/name） */
         void onJoinRequest(String requestId, String deviceId, String name);
 
+        /** 家庭被群主解散（familyId=被解散的家庭；本机应把它从家庭列表中移除） */
+        void onFamilyDisbanded(String familyId);
+
         /** 连接状态变化 */
         void onStatus(boolean connected);
     }
@@ -201,6 +204,8 @@ public class WsClient {
             } else if ("join-request".equals(type)) {
                 listener.onJoinRequest(o.optString("requestId", ""), o.optString("deviceId", ""),
                         o.optString("name", ""));
+            } else if ("family-disbanded".equals(type)) {
+                listener.onFamilyDisbanded(o.optString("familyId", ""));
             }
         } catch (JSONException ignored) {
         }

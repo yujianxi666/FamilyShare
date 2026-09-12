@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 列表顶部渐隐：上方还有家人时，从「面板底色」渐变到「透明」，让被裁掉的那半行自然淡出 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="@color/bg_panel"
+        android:endColor="@android:color/transparent"
+        android:type="linear" />
+</shape>

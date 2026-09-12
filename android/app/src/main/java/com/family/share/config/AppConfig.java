@@ -80,6 +80,8 @@ public final class AppConfig {
     public static final String BROADCAST_INVITE = "com.family.share.broadcast.INVITE";
     /** 有人申请加入家庭（群主审批用；requestId/deviceId/name） */
     public static final String BROADCAST_JOIN_REQUEST = "com.family.share.broadcast.JOIN_REQUEST";
+    /** 家庭被群主解散（familyId=被解散的家庭） */
+    public static final String BROADCAST_FAMILY_DISBANDED = "com.family.share.broadcast.FAMILY_DISBANDED";
 
     /** 服务连接状态 */
     public static final int STATUS_CONNECTING = 0;

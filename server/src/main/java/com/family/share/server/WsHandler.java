@@ -45,28 +45,26 @@ public class WsHandler extends TextWebSocketHandler {
         String deviceId = q.get("deviceId");
         String familyId = q.get("familyId");
         String name = q.get("name");
-        Store.Family family = store.getFamily(familyId);
-        if (deviceId == null || family == null || !family.members.containsKey(deviceId)
-                || family.banned.containsKey(deviceId)) {
+        boolean banned = store.isBanned(familyId, deviceId);
+        if (deviceId == null || !store.isMember(familyId, deviceId) || banned) {
             session.close(new CloseStatus(4001, "unauthorized"));
             return;
-        }
-        Store.Member member = family.members.get(deviceId);
-        // 连接时更新昵称
-        if (name != null && !name.isEmpty() && !name.equals(member.name)) {
-            member.name = name;
         }
         // 下线模式（查看但不更新自己，对他人显示离线）。
         // 连接携带 offline=1 则标记离线；恢复上线重连（不带 offline=1）则清除离线标记，
         // 避免“App 明明在后台（已重连）却仍显示离线”。
-        member.offline = "1".equals(q.get("offline"));
+        // 昵称与下线标记统一在 Store 内加锁更新，避免与每 2 秒的持久化快照并发修改同一对象。
+        boolean offline = "1".equals(q.get("offline"));
+        store.setMemberConnected(familyId, deviceId, offline, name);
+        Boolean track = store.memberTrack(familyId, deviceId);
         sessions.put(deviceId, session);
         sessionToDevice.put(session.getId(), deviceId);
         send(session, map("type", "hello"));
         // 通知本机当前的轨迹开关状态，以便调整上报频率
-        send(session, map("type", "track-changed", "deviceId", deviceId, "track", member.track));
+        send(session, map("type", "track-changed", "deviceId", deviceId,
+                "track", track != null && track));
         broadcastToFamily(familyId, map("type", "member-status", "deviceId", deviceId,
-                "online", !member.offline, "offlineMode", member.offline));
+                "online", !offline, "offlineMode", offline));
     }
 
     @Override
@@ -82,10 +80,9 @@ public class WsHandler extends TextWebSocketHandler {
                 sessions.remove(deviceId);
                 Store.Family family = store.findFamilyByMember(deviceId);
                 if (family != null) {
-                    Store.Member m = family.members.get(deviceId);
-                    boolean offline = m != null && m.offline;
+                    Boolean offline = store.memberOffline(family.id, deviceId);
                     broadcastToFamily(family.id, map("type", "member-status", "deviceId", deviceId,
-                            "online", false, "offlineMode", offline));
+                            "online", false, "offlineMode", offline != null && offline));
                 }
             }
         }
@@ -160,8 +157,9 @@ public class WsHandler extends TextWebSocketHandler {
     }
 
     public void broadcastToFamily(String familyId, Map<String, Object> msg) {
-        Store.Family family = store.getFamily(familyId);
-        if (family == null) {
+        // 取成员快照：成员加入/移出发生在其它线程，直接遍历 family.members 可能触发并发修改异常
+        java.util.List<String> ids = store.memberIds(familyId);
+        if (ids.isEmpty()) {
             return;
         }
         String text;
@@ -170,7 +168,7 @@ public class WsHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             return;
         }
-        for (String deviceId : family.members.keySet()) {
+        for (String deviceId : ids) {
             WebSocketSession s = sessions.get(deviceId);
             if (s != null && s.isOpen()) {
                 send(s, text);

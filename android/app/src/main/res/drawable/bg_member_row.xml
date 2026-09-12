@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 成员列表行：浅色圆角卡片（深浅色模式由 values-night/colors.xml 覆盖配色） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/bg_row" />
+    <corners android:radius="14dp" />
+</shape>
