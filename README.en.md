@@ -163,8 +163,6 @@ Released under the [CC BY-SA 4.0](LICENSE) license (Creative Commons Attribution
 - You must give **appropriate credit** (name the author, link the license, indicate changes) and **distribute your contributions under the same license** (CC BY-SA 4.0).
 - Full license text: [LICENSE](LICENSE); official text: <https://creativecommons.org/licenses/by-sa/4.0/legalcode.en>
 
-> ⚠️ If you publish on an app store, note the AMap SDK's commercial terms may differ from the open-source license — verify before publishing.
-
 ---
 
 ## 📋 Changelog

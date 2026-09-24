@@ -165,8 +165,6 @@ FAMILYSHARE/
 - 但必须**署名**（注明作者并附许可协议链接、标明是否做了修改），且**衍生作品必须以相同协议（CC BY-SA 4.0）发布**。
 - 完整许可协议：[LICENSE](LICENSE)；官方文本：<https://creativecommons.org/licenses/by-sa/4.0/legalcode.zh-hans>
 
-> ⚠️ 若你在应用市场发布，请注意高德 SDK 的商用许可条款可能与开源许可存在差异，发布前请自行确认。
-
 ---
 
 ## 📋 更新日志
