@@ -157,7 +157,11 @@ If you are willing to provide a server for this project, feel free to contact: *
 
 ## 📄 License
 
-Released under the [MIT License](LICENSE).
+Released under the [CC BY-SA 4.0](LICENSE) license (Creative Commons Attribution-ShareAlike 4.0 International), copyright (c) 2026 KeepHope2901.
+
+- You are free to **share** (copy and redistribute) and **adapt** (remix, transform, build upon) this work, including commercially.
+- You must give **appropriate credit** (name the author, link the license, indicate changes) and **distribute your contributions under the same license** (CC BY-SA 4.0).
+- Full license text: [LICENSE](LICENSE); official text: <https://creativecommons.org/licenses/by-sa/4.0/legalcode.en>
 
 > ⚠️ If you publish on an app store, note the AMap SDK's commercial terms may differ from the open-source license — verify before publishing.
 
